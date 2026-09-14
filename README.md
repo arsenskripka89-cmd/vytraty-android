@@ -52,13 +52,15 @@ cd C:\Users\admin\ExpenseManager
 1. Підняти `versionCode` і `versionName` в `app/build.gradle.kts`.
 2. `.\gradlew.bat assembleRelease` (підпис береться з `keystore.properties`, файл не в git).
 3. `gh release create vX.Y.Z appuild\outputspkeleasepp-release.apk --title "Витрати X.Y.Z" --notes "..."`.
+eleasepp-release.apk --title "Витрати X.Y.Z" --notes "..."`.
 
 Ключ підпису `keystore/vytraty-release.jks` та `keystore.properties` зберігайте в резервній копії:
 без них не можна випустити оновлення, яке встановиться поверх наявної версії.
 
 ## Встановлення та перший запуск
 
-1. Встановіть `app-debug.apk` на телефон (увімкніть «Невідомі джерела»).
+1. Завантажте APK з останнього релізу на https://github.com/arsenskripka89-cmd/vytraty-android/releases
+   і встановіть на телефон (увімкніть «Невідомі джерела»).
 2. Відкрийте застосунок → на Огляді торкніться банера «Автозахоплення вимкнено» → у системних
    налаштуваннях увімкніть доступ до сповіщень для «Витрати».
 3. У **Ще → Гаманці** вкажіть для кожної картки останні 4 цифри — так платежі потраплятимуть у правильний гаманець.
