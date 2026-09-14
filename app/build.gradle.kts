@@ -22,8 +22,11 @@ android {
         applicationId = "ua.vytraty.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.1"
+        // Version comes from the release tag in CI (VYTRATY_VERSION=1.2.0 → code 10200); local builds use the default.
+        val ver = System.getenv("VYTRATY_VERSION")?.takeIf { it.isNotBlank() } ?: "1.1.1"
+        val parts = ver.split('.').map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
+        versionCode = parts.getOrElse(0) { 0 } * 10000 + parts.getOrElse(1) { 0 } * 100 + parts.getOrElse(2) { 0 }
+        versionName = ver
         vectorDrawables { useSupportLibrary = true }
         // GitHub repository whose Releases feed in-app updates (tag vX.Y.Z + attached .apk)
         buildConfigField("String", "UPDATE_REPO", "\"arsenskripka89-cmd/vytraty-android\"")
