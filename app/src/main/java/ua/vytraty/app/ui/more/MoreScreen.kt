@@ -39,7 +39,7 @@ fun MoreScreen(
             HorizontalDivider()
             Item(Icons.Filled.Settings, "Налаштування", "Доступ до сповіщень, експорт, тестер парсера", onSettings)
             Text(
-                "Витрати · v1.0 · Ваші дані зберігаються лише на цьому пристрої.",
+                "Витрати · v${ua.vytraty.app.BuildConfig.VERSION_NAME} · Ваші дані зберігаються лише на цьому пристрої.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp),
             )

@@ -22,8 +22,8 @@ android {
         applicationId = "ua.vytraty.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.1.1"
         vectorDrawables { useSupportLibrary = true }
         // GitHub repository whose Releases feed in-app updates (tag vX.Y.Z + attached .apk)
         buildConfigField("String", "UPDATE_REPO", "\"arsenskripka89-cmd/vytraty-android\"")
