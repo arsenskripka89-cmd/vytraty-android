@@ -1,0 +1,2 @@
+-keepattributes *Annotation*
+-keep class ua.vytraty.app.data.bank.monobank.** { *; }
