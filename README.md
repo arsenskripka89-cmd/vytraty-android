@@ -51,7 +51,7 @@ cd C:\Users\admin\ExpenseManager
 
 1. Підняти `versionCode` і `versionName` в `app/build.gradle.kts`.
 2. `.\gradlew.bat assembleRelease` (підпис береться з `keystore.properties`, файл не в git).
-3. `gh release create vX.Y.Z appuild\outputspkeleasepp-release.apk --title "Витрати X.Y.Z" --notes "..."`.
+3. `gh release create vX.Y.Z app\build\outputs\apk\release\app-release.apk --title "Витрати X.Y.Z" --notes "..."`.
 eleasepp-release.apk --title "Витрати X.Y.Z" --notes "..."`.
 
 Ключ підпису `keystore/vytraty-release.jks` та `keystore.properties` зберігайте в резервній копії:
