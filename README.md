@@ -41,6 +41,21 @@ cd C:\Users\admin\ExpenseManager
 
 Або відкрийте папку в Android Studio (Ladybug або новіша) і натисніть Run.
 
+## Оновлення
+
+Застосунок сам перевіряє нові версії раз на добу та при запуску (GitHub Releases репозиторію
+`arsenskripka89-cmd/vytraty-android`) і показує сповіщення. Вручну: **Налаштування → Перевірити оновлення →
+Завантажити та встановити**. Перший раз Android попросить дозволити цьому застосунку встановлювати невідомі програми.
+
+Щоб випустити нову версію:
+
+1. Підняти `versionCode` і `versionName` в `app/build.gradle.kts`.
+2. `.\gradlew.bat assembleRelease` (підпис береться з `keystore.properties`, файл не в git).
+3. `gh release create vX.Y.Z appuild\outputspkeleasepp-release.apk --title "Витрати X.Y.Z" --notes "..."`.
+
+Ключ підпису `keystore/vytraty-release.jks` та `keystore.properties` зберігайте в резервній копії:
+без них не можна випустити оновлення, яке встановиться поверх наявної версії.
+
 ## Встановлення та перший запуск
 
 1. Встановіть `app-debug.apk` на телефон (увімкніть «Невідомі джерела»).
