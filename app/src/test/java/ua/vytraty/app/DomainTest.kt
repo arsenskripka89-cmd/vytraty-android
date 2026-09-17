@@ -5,9 +5,11 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import ua.vytraty.app.data.db.Recurrence
+import ua.vytraty.app.data.db.TxKind
 import ua.vytraty.app.domain.Dates
 import ua.vytraty.app.domain.MerchantNormalizer
 import ua.vytraty.app.domain.Money
+import ua.vytraty.app.domain.Refunds
 import java.time.LocalDateTime
 
 class DomainTest {
@@ -50,5 +52,26 @@ class UpdateVersionTest {
         assertTrue(ua.vytraty.app.data.update.UpdateChecker.isNewer("1.10.0", "1.9.2"))
         assertTrue(!ua.vytraty.app.data.update.UpdateChecker.isNewer("1.1.0", "1.1.0"))
         assertTrue(!ua.vytraty.app.data.update.UpdateChecker.isNewer("1.0.9", "1.1"))
+    }
+}
+
+class RefundTest {
+    @Test
+    fun `income with an expense category is stored as a negative expense`() {
+        assertEquals(TxKind.EXPENSE to -88700L, Refunds.stored(TxKind.INCOME, TxKind.EXPENSE, 88700L))
+        // plain income stays income
+        assertEquals(TxKind.INCOME to 88700L, Refunds.stored(TxKind.INCOME, TxKind.INCOME, 88700L))
+        assertEquals(TxKind.INCOME to 88700L, Refunds.stored(TxKind.INCOME, null, 88700L))
+        // an expense is untouched
+        assertEquals(TxKind.EXPENSE to 88700L, Refunds.stored(TxKind.EXPENSE, TxKind.EXPENSE, 88700L))
+    }
+
+    @Test
+    fun `a stored refund opens as income again`() {
+        val (kind, amount) = Refunds.stored(TxKind.INCOME, TxKind.EXPENSE, 88700L)
+        assertTrue(Refunds.isRefund(kind, amount))
+        assertEquals(TxKind.INCOME, Refunds.formKind(kind, amount))
+        assertEquals(TxKind.EXPENSE, Refunds.formKind(TxKind.EXPENSE, 88700L))
+        assertTrue(!Refunds.isRefund(TxKind.INCOME, 88700L))
     }
 }

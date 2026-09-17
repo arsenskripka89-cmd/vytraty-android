@@ -58,6 +58,7 @@ import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Dates
 import ua.vytraty.app.domain.Money
+import ua.vytraty.app.domain.Refunds
 import ua.vytraty.app.ui.components.AmountText
 import ua.vytraty.app.ui.components.AppScaffold
 import ua.vytraty.app.ui.components.CategoryBadge
@@ -199,6 +200,7 @@ fun TransactionRowItem(row: TransactionRow, onClick: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     listOfNotNull(
+                        "Повернення".takeIf { Refunds.isRefund(row.kind, row.amountMinor) },
                         if (needsCategory) "Без категорії" else row.categoryName.takeIf { row.merchant != null && row.kind != TxKind.TRANSFER },
                         row.walletName,
                         row.cardLast4?.let { "•••• $it" },

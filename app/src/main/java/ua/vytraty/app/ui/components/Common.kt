@@ -71,6 +71,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -101,6 +102,7 @@ import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.data.db.WalletType
 import ua.vytraty.app.domain.Dates
 import ua.vytraty.app.domain.Money
+import ua.vytraty.app.domain.Refunds
 import ua.vytraty.app.domain.parser.BankSource
 import ua.vytraty.app.ui.theme.ExpenseRed
 import ua.vytraty.app.ui.theme.IncomeGreen
@@ -242,13 +244,14 @@ fun CurrencyPicker(value: String, onChange: (String) -> Unit, label: String = "�
 
 @Composable
 fun AmountText(minor: Long, currency: String, kind: TxKind, modifier: Modifier = Modifier, large: Boolean = false) {
-    val (color, prefix) = when (kind) {
-        TxKind.EXPENSE -> ExpenseRed to "−"
-        TxKind.INCOME -> IncomeGreen to "+"
-        TxKind.TRANSFER -> TransferBlue to ""
+    val (color, prefix) = when {
+        Refunds.isRefund(kind, minor) -> IncomeGreen to "+"
+        kind == TxKind.EXPENSE -> ExpenseRed to "−"
+        kind == TxKind.INCOME -> IncomeGreen to "+"
+        else -> TransferBlue to ""
     }
     Text(
-        text = prefix + Money.format(minor, currency),
+        text = prefix + Money.format(kotlin.math.abs(minor), currency),
         color = color,
         fontWeight = FontWeight.SemiBold,
         style = if (large) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.bodyLarge,
@@ -307,7 +310,10 @@ fun IconPicker(selected: String, color: Long, onSelect: (String) -> Unit) {
     }
 }
 
-/** Bottom sheet listing categories of one kind. */
+/**
+ * Bottom sheet listing categories of one kind. For income it also offers "Повернення витрат", which
+ * switches the list to expense categories: the chosen one says what the money is coming back for.
+ */
 @Composable
 fun CategoryPickerSheet(
     categories: List<CategoryEntity>,
@@ -317,10 +323,32 @@ fun CategoryPickerSheet(
     onDismiss: () -> Unit,
     allowNone: Boolean = true,
 ) {
+    val selectedIsExpense = categories.firstOrNull { it.id == selectedId }?.kind == TxKind.EXPENSE
+    var refundMode by remember(selectedId) { mutableStateOf(kind == TxKind.INCOME && selectedIsExpense) }
+    val listedKind = if (refundMode) TxKind.EXPENSE else kind
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text("Оберіть категорію", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(16.dp))
+        Text(
+            if (refundMode) "Повернення: за що повертають гроші" else "Оберіть категорію",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(16.dp),
+        )
         LazyColumn(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-            if (allowNone) item {
+            if (kind == TxKind.INCOME) item {
+                ListItem(
+                    headlineContent = { Text(if (refundMode) "← Категорії доходу" else "Повернення витрат") },
+                    supportingContent = {
+                        Text(
+                            if (refundMode) "Повернутись до звичайного доходу"
+                            else "Гроші повернули за покупку — оберіть категорію витрати",
+                        )
+                    },
+                    leadingContent = { CategoryBadge("cashback", 0xFF43A047) },
+                    modifier = Modifier.clickable { refundMode = !refundMode },
+                )
+                HorizontalDivider()
+            }
+            if (allowNone && !refundMode) item {
                 ListItem(
                     headlineContent = { Text("Без категорії") },
                     leadingContent = { CategoryBadge(null, null) },
@@ -328,7 +356,7 @@ fun CategoryPickerSheet(
                     modifier = Modifier.clickable { onSelect(null) },
                 )
             }
-            items(categories.filter { it.kind == kind }, key = { it.id }) { c ->
+            items(categories.filter { it.kind == listedKind }, key = { it.id }) { c ->
                 ListItem(
                     headlineContent = { Text(c.name) },
                     leadingContent = { CategoryBadge(c.icon, c.color) },

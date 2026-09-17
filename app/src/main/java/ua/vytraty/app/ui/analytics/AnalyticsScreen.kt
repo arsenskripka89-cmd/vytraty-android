@@ -145,7 +145,7 @@ fun AnalyticsScreen() {
                             Text("$pct %", style = MaterialTheme.typography.bodySmall)
                         }
                         LinearProgressIndicator(
-                            progress = { if (total > 0) cs.total.toFloat() / total else 0f },
+                            progress = { if (total > 0) (cs.total.toFloat() / total).coerceIn(0f, 1f) else 0f },
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                             color = cat?.color?.toColor() ?: MaterialTheme.colorScheme.outline,
                         )

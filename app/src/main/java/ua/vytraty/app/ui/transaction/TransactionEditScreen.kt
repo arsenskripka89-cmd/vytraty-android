@@ -55,6 +55,7 @@ import ua.vytraty.app.data.db.TxSource
 import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Money
+import ua.vytraty.app.domain.Refunds
 import ua.vytraty.app.ui.components.AppScaffold
 import ua.vytraty.app.ui.components.CategoryBadge
 import ua.vytraty.app.ui.components.CategoryPickerSheet
@@ -64,6 +65,7 @@ import ua.vytraty.app.ui.components.PickerField
 import ua.vytraty.app.ui.components.WalletIcon
 import ua.vytraty.app.ui.components.WalletPickerSheet
 import ua.vytraty.app.ui.components.appViewModel
+import ua.vytraty.app.ui.theme.IncomeGreen
 import ua.vytraty.app.ui.theme.WarnAmber
 
 data class TxForm(
@@ -104,7 +106,10 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
                 val t = db.transactionDao().byId(id)
                 if (t != null) {
                     form.value = TxForm(
-                        id = t.id, kind = t.kind, amount = Money.minorToInput(t.amountMinor), walletId = t.walletId,
+                        id = t.id,
+                        kind = Refunds.formKind(t.kind, t.amountMinor),
+                        amount = Money.minorToInput(kotlin.math.abs(t.amountMinor)),
+                        walletId = t.walletId,
                         toWalletId = t.transferToWalletId, categoryId = t.categoryId, merchant = t.merchant.orEmpty(),
                         note = t.note.orEmpty(), timestamp = t.timestamp, source = t.source, cardLast4 = t.cardLast4,
                         externalId = t.externalId, notificationLogId = t.notificationLogId, currency = t.currency,
@@ -131,15 +136,17 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
             }
             val wallet = db.walletDao().byId(walletId)
             val categoryId = if (f.kind == TxKind.TRANSFER) null else f.categoryId
+            // Income + an expense category = a refund: stored as a negative expense of that category.
+            val (kind, signedAmount) = Refunds.stored(f.kind, categoryId?.let { db.categoryDao().byId(it)?.kind }, amount)
             val entity = TransactionEntity(
-                id = f.id, walletId = walletId, categoryId = categoryId, kind = f.kind, amountMinor = amount,
+                id = f.id, walletId = walletId, categoryId = categoryId, kind = kind, amountMinor = signedAmount,
                 currency = f.currency ?: wallet?.currency ?: "UAH", timestamp = f.timestamp,
                 merchant = f.merchant.trim().ifBlank { null }, note = f.note.trim().ifBlank { null },
-                source = f.source, cardLast4 = f.cardLast4, transferToWalletId = if (f.kind == TxKind.TRANSFER) f.toWalletId else null,
+                source = f.source, cardLast4 = f.cardLast4, transferToWalletId = if (kind == TxKind.TRANSFER) f.toWalletId else null,
                 externalId = f.externalId, notificationLogId = f.notificationLogId,
             )
             val savedId = if (f.id == 0L) db.transactionDao().insert(entity) else { db.transactionDao().update(entity); f.id }
-            if (f.kind == TxKind.EXPENSE) c.budgetChecker.checkAfterExpense(categoryId)
+            if (kind == TxKind.EXPENSE) c.budgetChecker.checkAfterExpense(categoryId)
             if (categoryId != null && f.learnRule && entity.merchant != null) {
                 val outcome = c.assignCategory.assign(savedId, categoryId, learn = true)
                 if (outcome.otherUncategorizedSameMerchant.isNotEmpty()) {
@@ -247,7 +254,16 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
                     onClick = { showCategory = true },
                     leading = { CategoryBadge(category?.icon ?: "category", category?.color ?: 0xFFF9A825, 24) },
                 )
-                if (category == null) Text("Категорію не призначено", color = WarnAmber, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp, top = 4.dp))
+                val isRefund = f.kind == TxKind.INCOME && category?.kind == TxKind.EXPENSE
+                if (category == null) {
+                    Text("Категорію не призначено", color = WarnAmber, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp, top = 4.dp))
+                } else if (isRefund) {
+                    Text(
+                        "Повернення: зменшить витрати в категорії «${category.name}»",
+                        color = IncomeGreen, style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 16.dp, top = 4.dp),
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = f.merchant, onValueChange = { v -> vm.update { copy(merchant = v) } },

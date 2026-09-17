@@ -31,7 +31,8 @@ data class LinePoint(val label: String, val value: Long)
 /** Donut chart with a centered label. */
 @Composable
 fun DonutChart(slices: List<PieSlice>, centerTop: String, centerBottom: String, modifier: Modifier = Modifier, stroke: Float = 28f) {
-    val total = slices.sumOf { it.value }.coerceAtLeast(1)
+    // Refunds can push a category below zero; such a slice is simply not drawn.
+    val total = slices.sumOf { it.value.coerceAtLeast(0) }.coerceAtLeast(1)
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
     Box(modifier, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxWidth().height(220.dp).padding(16.dp)) {
@@ -41,7 +42,7 @@ fun DonutChart(slices: List<PieSlice>, centerTop: String, centerBottom: String, 
             drawArc(trackColor, 0f, 360f, false, topLeft, sz, style = Stroke(stroke))
             var start = -90f
             slices.forEach { s ->
-                val sweep = 360f * s.value / total
+                val sweep = 360f * s.value.coerceAtLeast(0) / total
                 if (sweep > 0f) {
                     drawArc(s.color, start, sweep - 1.5f, false, topLeft, sz, style = Stroke(stroke, cap = StrokeCap.Butt))
                 }
