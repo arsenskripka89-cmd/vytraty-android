@@ -23,6 +23,7 @@ enum class BankSource(val displayName: String, val packages: List<String>) {
     REVOLUT("Revolut", listOf("com.revolut.revolut")),
     OSCHADBANK("Ощадбанк", listOf("ua.oschadbank.online")),
     PUMB("ПУМБ", listOf("com.pumb.online", "ua.pumb.pumbonline")),
+    TELEGRAM("Telegram (бот банку)", listOf("org.telegram.messenger", "org.telegram.messenger.web", "org.telegram.plus", "org.thunderdog.challegram")),
     OTHER("Інший банк", emptyList());
 
     companion object {
@@ -35,8 +36,23 @@ enum class BankSource(val displayName: String, val packages: List<String>) {
             else -> entries.firstOrNull { it.name.equals(code, true) }
         }
 
-        /** Banks a wallet can belong to (Google Pay is a payment app, not a bank). */
-        val forWallets: List<BankSource> get() = entries.filter { it != GOOGLE_PAY && it != OTHER }
+        /** Banks a wallet can belong to (Google Pay and Telegram deliver notifications, they are not banks). */
+        val forWallets: List<BankSource> get() = entries.filter { it != GOOGLE_PAY && it != OTHER && it != TELEGRAM }
+
+        private val nameHints = mapOf(
+            MONOBANK to listOf("mono", "моно"),
+            PRIVATBANK to listOf("privat", "приват", "п24"),
+            RAIFFEISEN to listOf("raif", "rayf", "райф", "аваль", "aval"),
+            REVOLUT to listOf("revolut", "револют"),
+            OSCHADBANK to listOf("oschad", "ощад"),
+            PUMB to listOf("pumb", "пумб"),
+        )
+
+        /** Wallet without a bank chosen: guess it from the name ("Приват EUR" → Приват24) just for the logo. */
+        fun guessByName(name: String?): BankSource? {
+            val n = name?.lowercase() ?: return null
+            return nameHints.entries.firstOrNull { (_, hints) -> hints.any { it in n } }?.key
+        }
         val allPackages: Set<String> get() = entries.flatMap { it.packages }.toSet()
     }
 }
@@ -119,7 +135,7 @@ object TextCues {
         """списан|покупк|оплат|paid|payment|purchase|spent|withdraw|зняття|платіж|charged|debited|at |у |в """,
         RegexOption.IGNORE_CASE,
     )
-    private val balanceWords = Regex("""(баланс|balance|доступно|available|залишок)\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
+    private val balanceWords = Regex("""(баланс|бал\.|balance|доступно|available|залишок)\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
 
     private val cardLabelPattern = Regex("""(?iu)(?:з картки|с карты|з карти|from card|картка|карта|card)\s+([\p{L}\p{N}][\p{L}\p{N} .\-]{1,28})""")
 

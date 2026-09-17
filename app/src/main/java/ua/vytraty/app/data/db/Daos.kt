@@ -63,6 +63,9 @@ interface CategoryDao {
     @Query("SELECT COUNT(*) FROM categories")
     suspend fun count(): Int
 
+    @Query("SELECT * FROM categories WHERE name = :name AND kind = :kind LIMIT 1")
+    suspend fun byName(name: String, kind: TxKind): CategoryEntity?
+
     @Insert suspend fun insert(c: CategoryEntity): Long
     @Insert suspend fun insertAll(c: List<CategoryEntity>)
     @Update suspend fun update(c: CategoryEntity)
@@ -103,6 +106,9 @@ interface TransactionDao {
 
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun byId(id: Long): TransactionEntity?
+
+    @Query("SELECT * FROM transactions WHERE feeOfTransferId = :transferId LIMIT 1")
+    suspend fun feeOf(transferId: Long): TransactionEntity?
 
     @Query("SELECT * FROM transactions WHERE source = :source AND externalId = :externalId LIMIT 1")
     suspend fun byExternalId(source: TxSource, externalId: String): TransactionEntity?

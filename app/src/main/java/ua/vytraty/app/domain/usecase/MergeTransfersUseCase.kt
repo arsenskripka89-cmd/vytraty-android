@@ -39,23 +39,54 @@ class MergeTransfersUseCase(
 
         val sent = if (tx.kind == TxKind.EXPENSE) tx else other
         val received = if (tx.kind == TxKind.EXPENSE) other else tx
+        val fee = feeFor(sent.amountMinor, received.amountMinor, sent.currency.equals(received.currency, true))
         val transfer = sent.copy(
             kind = TxKind.TRANSFER,
             categoryId = null,
             merchant = null,
+            // What the fee takes is an expense of its own, so the transfer itself moves what arrived.
+            amountMinor = if (fee != null) received.amountMinor else sent.amountMinor,
             transferToWalletId = received.walletId,
             receivedMinor = received.amountMinor,
             receivedCurrency = received.currency,
             note = listOfNotNull(sent.note?.ifBlank { null }, TRANSFER_NOTE).joinToString(" · "),
         )
         db.transactionDao().update(transfer)
+        setFee(transfer.id, fee)
         // The credit notification now belongs to the transfer, not to a separate income.
         db.notificationLogDao().byTransactionId(received.id).forEach { log ->
             db.notificationLogDao().update(log.copy(transactionId = transfer.id))
         }
         db.transactionDao().deleteById(received.id)
-        notifyMerged(transfer)
+        notifyMerged(transfer, fee)
         return transfer.id
+    }
+
+    /**
+     * The bank fee of a transfer, kept as one expense of its own so it lands in the category totals,
+     * the budget and the month like any other spending. Passing null removes it.
+     */
+    suspend fun setFee(transferId: Long, feeMinor: Long?) {
+        val transfer = db.transactionDao().byId(transferId) ?: return
+        val existing = db.transactionDao().feeOf(transferId)
+        if (feeMinor == null || feeMinor <= 0) {
+            existing?.let { db.transactionDao().deleteById(it.id) }
+            return
+        }
+        val category = db.categoryDao().byName(FEE_CATEGORY, TxKind.EXPENSE)
+        val fee = TransactionEntity(
+            id = existing?.id ?: 0,
+            walletId = transfer.walletId,
+            categoryId = category?.id,
+            kind = TxKind.EXPENSE,
+            amountMinor = feeMinor,
+            currency = transfer.currency,
+            timestamp = transfer.timestamp,
+            note = "Комісія за переказ",
+            source = transfer.source,
+            feeOfTransferId = transferId,
+        )
+        if (existing == null) db.transactionDao().insert(fee) else db.transactionDao().update(fee)
     }
 
     /** Undo: the transfer goes back to being an expense, and the credited amount becomes an income again. */
@@ -63,9 +94,12 @@ class MergeTransfersUseCase(
         val tx = db.transactionDao().byId(transferId) ?: return
         val toWalletId = tx.transferToWalletId
         if (tx.kind != TxKind.TRANSFER || toWalletId == null) return
+        val fee = db.transactionDao().feeOf(transferId)?.amountMinor ?: 0L
+        setFee(transferId, null)
         db.transactionDao().update(
             tx.copy(
                 kind = TxKind.EXPENSE,
+                amountMinor = tx.amountMinor + fee,
                 transferToWalletId = null,
                 receivedMinor = null,
                 receivedCurrency = null,
@@ -88,18 +122,30 @@ class MergeTransfersUseCase(
         AppNotifications.cancelCaptured(context, transferId)
     }
 
-    private fun notifyMerged(transfer: TransactionEntity) {
-        val sent = Money.format(transfer.amountMinor, transfer.currency)
+    private fun notifyMerged(transfer: TransactionEntity, feeMinor: Long?) {
+        val sent = Money.format((transfer.amountMinor + (feeMinor ?: 0)), transfer.currency)
         val got = Money.format(transfer.receivedMinor ?: transfer.amountMinor, transfer.receivedCurrency ?: transfer.currency)
         AppNotifications.showTransferMerged(
             context, transfer.id,
             "Переказ $sent → $got",
-            listOfNotNull("Два сповіщення об'єднано в переказ між вашими картками", rateLine(transfer)).joinToString(". "),
+            listOfNotNull(
+                "Два сповіщення об'єднано в переказ між вашими картками",
+                rateLine(transfer),
+                feeMinor?.let { "Комісія ${Money.format(it, transfer.currency)} записана у витрати" },
+            ).joinToString(". "),
         )
     }
 
     companion object {
         const val TRANSFER_NOTE = "Переказ між своїми картками"
+        const val FEE_CATEGORY = "Комісії та податки"
+
+        /**
+         * What the bank kept for itself. Only meaningful inside one currency — when the transfer also
+         * converts, the difference is the exchange rate, not a fee, so it stays with the transfer.
+         */
+        fun feeFor(sentMinor: Long, receivedMinor: Long, sameCurrency: Boolean): Long? =
+            (sentMinor - receivedMinor).takeIf { sameCurrency && it > 0 }
 
         /** Both notifications of one card-to-card transfer arrive within seconds; a quarter of an hour is generous. */
         val WINDOW_MS: Long = TimeUnit.MINUTES.toMillis(15)

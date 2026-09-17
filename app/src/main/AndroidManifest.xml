@@ -20,6 +20,10 @@
         <package android:name="ua.oschadbank.online" />
         <package android:name="com.pumb.online" />
         <package android:name="ua.pumb.pumbonline" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="org.telegram.messenger.web" />
+        <package android:name="org.telegram.plus" />
+        <package android:name="org.thunderdog.challegram" />
     </queries>
 
     <application

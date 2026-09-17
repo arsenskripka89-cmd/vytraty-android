@@ -63,6 +63,7 @@ import ua.vytraty.app.domain.observeWalletBalances
 import ua.vytraty.app.ui.components.AppScaffold
 import ua.vytraty.app.ui.components.BankLogo
 import ua.vytraty.app.ui.components.ColorPicker
+import ua.vytraty.app.ui.components.bankOrGuess
 import ua.vytraty.app.ui.components.CurrencyPicker
 import ua.vytraty.app.ui.components.PickerField
 import ua.vytraty.app.ui.components.SectionHeader
@@ -88,7 +89,7 @@ fun WalletsScreen(onEdit: (Long) -> Unit, onBack: () -> Unit) {
                 Text("Разом: ${byCurrency.joinToString(" · ")}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(16.dp))
             }
             // Cards of one bank stand together; wallets without a bank come last.
-            active.groupBy { BankSource.byCode(it.wallet.bankCode) }
+            active.groupBy { it.wallet.bankOrGuess() }
                 .toList()
                 .sortedBy { (bank, _) -> bank?.displayName ?: "\uFFFF" }
                 .forEach { (bank, group) ->
@@ -109,7 +110,7 @@ fun WalletsScreen(onEdit: (Long) -> Unit, onBack: () -> Unit) {
                         ListItem(
                             headlineContent = { Text(wb.wallet.name + if (wb.wallet.isDefault) "  (за замовчуванням)" else "") },
                             supportingContent = { Text(listOfNotNull(walletTypeLabel(wb.wallet.type), wb.wallet.cardLast4?.let { "•••• $it" }).joinToString(" · ")) },
-                            leadingContent = { WalletIcon(wb.wallet.type, wb.wallet.color, bankCode = wb.wallet.bankCode) },
+                            leadingContent = { WalletIcon(wb.wallet) },
                             trailingContent = { Text(Money.format(wb.balanceMinor, wb.wallet.currency), fontWeight = FontWeight.SemiBold) },
                             modifier = Modifier.clickable { onEdit(wb.wallet.id) },
                         )

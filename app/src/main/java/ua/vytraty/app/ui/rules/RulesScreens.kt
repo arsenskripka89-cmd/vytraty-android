@@ -352,7 +352,7 @@ fun RuleEditScreen(id: Long, logId: Long, walletId: Long, onBack: () -> Unit) {
             if (f.type == RuleType.WALLET) {
                 PickerField(
                     "Картка / гаманець", wallet?.name ?: "Оберіть", onClick = { showWallet = true },
-                    leading = wallet?.let { { WalletIcon(it.type, it.color, 24, it.bankCode) } },
+                    leading = wallet?.let { { WalletIcon(it, 24) } },
                 )
             } else {
                 PickerField(

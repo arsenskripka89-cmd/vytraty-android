@@ -56,6 +56,7 @@ import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Money
 import ua.vytraty.app.domain.Refunds
+import ua.vytraty.app.domain.usecase.MergeTransfersUseCase
 import ua.vytraty.app.ui.components.AppScaffold
 import ua.vytraty.app.ui.components.CategoryBadge
 import ua.vytraty.app.ui.components.CategoryPickerSheet
@@ -82,6 +83,8 @@ data class TxForm(
     val cardLast4: String? = null,
     /** Transfers between currencies: what arrived on the other card. Empty = the same as sent. */
     val received: String = "",
+    /** Same-currency transfer: write what the bank kept as an expense of its own. */
+    val recordFee: Boolean = true,
     val externalId: String? = null,
     val notificationLogId: Long? = null,
     val currency: String? = null,
@@ -107,13 +110,15 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
             if (id > 0) {
                 val t = db.transactionDao().byId(id)
                 if (t != null) {
+                    val fee = if (t.kind == TxKind.TRANSFER) db.transactionDao().feeOf(t.id)?.amountMinor ?: 0L else 0L
                     form.value = TxForm(
                         id = t.id,
                         kind = Refunds.formKind(t.kind, t.amountMinor),
-                        amount = Money.minorToInput(kotlin.math.abs(t.amountMinor)),
+                        amount = Money.minorToInput(kotlin.math.abs(t.amountMinor) + fee),
                         walletId = t.walletId,
                         toWalletId = t.transferToWalletId, categoryId = t.categoryId, merchant = t.merchant.orEmpty(),
                         received = t.receivedMinor?.let { Money.minorToInput(it) }.orEmpty(),
+                        recordFee = fee > 0 || t.kind != TxKind.TRANSFER,
                         note = t.note.orEmpty(), timestamp = t.timestamp, source = t.source, cardLast4 = t.cardLast4,
                         externalId = t.externalId, notificationLogId = t.notificationLogId, currency = t.currency,
                         learnRule = !t.merchant.isNullOrBlank(), loaded = true,
@@ -146,8 +151,17 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
             if (kind == TxKind.TRANSFER && f.received.isNotBlank() && (received == null || received <= 0)) {
                 form.update { it.copy(error = "Вкажіть суму зарахування або залиште поле порожнім") }; return@launch
             }
+            val sentCurrency = f.currency ?: wallet?.currency ?: "UAH"
+            // Inside one currency the difference is a bank fee and becomes its own expense; between
+            // currencies it is the rate the bank used and stays with the transfer.
+            val fee = if (kind == TxKind.TRANSFER && f.recordFee && received != null) {
+                MergeTransfersUseCase.feeFor(amount, received, sentCurrency.equals(toWallet?.currency ?: sentCurrency, true))
+            } else {
+                null
+            }
             val entity = TransactionEntity(
-                id = f.id, walletId = walletId, categoryId = categoryId, kind = kind, amountMinor = signedAmount,
+                id = f.id, walletId = walletId, categoryId = categoryId, kind = kind,
+                amountMinor = if (fee != null) received!! else signedAmount,
                 receivedMinor = received, receivedCurrency = if (received != null) toWallet?.currency ?: f.currency else null,
                 currency = f.currency ?: wallet?.currency ?: "UAH", timestamp = f.timestamp,
                 merchant = f.merchant.trim().ifBlank { null }, note = f.note.trim().ifBlank { null },
@@ -155,6 +169,7 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
                 externalId = f.externalId, notificationLogId = f.notificationLogId,
             )
             val savedId = if (f.id == 0L) db.transactionDao().insert(entity) else { db.transactionDao().update(entity); f.id }
+            if (kind == TxKind.TRANSFER) c.mergeTransfers.setFee(savedId, fee)
             if (kind == TxKind.EXPENSE) c.budgetChecker.checkAfterExpense(categoryId)
             if (categoryId != null && f.learnRule && entity.merchant != null) {
                 val outcome = c.assignCategory.assign(savedId, categoryId, learn = true)
@@ -175,7 +190,10 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
 
     fun delete() {
         viewModelScope.launch {
-            if (id > 0) db.transactionDao().deleteById(id)
+            if (id > 0) {
+                c.mergeTransfers.setFee(id, null)
+                db.transactionDao().deleteById(id)
+            }
             event.value = TxEvent.Saved
         }
     }
@@ -255,7 +273,7 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
             if (f.kind == TxKind.TRANSFER) {
                 Spacer(Modifier.height(12.dp))
                 PickerField("На гаманець", toWallet?.name ?: "Оберіть", onClick = { showToWallet = true },
-                    leading = toWallet?.let { { WalletIcon(it.type, it.color, 24, it.bankCode) } })
+                    leading = toWallet?.let { { WalletIcon(it, 24) } })
                 Spacer(Modifier.height(12.dp))
                 // Banks convert at their own rate and may take a fee, so what arrives is its own number.
                 Row {
@@ -278,18 +296,23 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
                 val sentCurrency = f.currency ?: wallet?.currency ?: "UAH"
                 val gotCurrency = toWallet?.currency ?: sentCurrency
                 if (sentMinor != null && gotMinor != null && sentMinor > 0 && gotMinor > 0) {
-                    val hint = if (!sentCurrency.equals(gotCurrency, true)) {
+                    val feeMinor = MergeTransfersUseCase.feeFor(sentMinor, gotMinor, sentCurrency.equals(gotCurrency, true))
+                    if (feeMinor != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = f.recordFee, onCheckedChange = { v -> vm.update { copy(recordFee = v) } })
+                            Text(
+                                "Комісія ${Money.format(feeMinor, sentCurrency)} — записати у витрати «${MergeTransfersUseCase.FEE_CATEGORY}»",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    } else if (!sentCurrency.equals(gotCurrency, true)) {
                         val rate = java.math.BigDecimal(sentMinor)
                             .divide(java.math.BigDecimal(gotMinor), 4, java.math.RoundingMode.HALF_UP)
-                        "Курс банку: 1 ${Money.symbol(gotCurrency)} = ${rate.toPlainString().replace('.', ',')} ${Money.symbol(sentCurrency)}"
-                    } else if (sentMinor > gotMinor) {
-                        "Комісія: ${Money.format(sentMinor - gotMinor, sentCurrency)}"
-                    } else {
-                        null
-                    }
-                    hint?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 16.dp, top = 4.dp))
+                        Text(
+                            "Курс банку: 1 ${Money.symbol(gotCurrency)} = ${rate.toPlainString().replace('.', ',')} ${Money.symbol(sentCurrency)}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 16.dp, top = 4.dp),
+                        )
                     }
                 }
             } else {

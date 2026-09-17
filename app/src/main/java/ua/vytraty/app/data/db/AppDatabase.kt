@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WalletEntity::class, CategoryEntity::class, TransactionEntity::class, MerchantRuleEntity::class,
         PlannedPaymentEntity::class, BudgetEntity::class, NotificationLogEntity::class, CaptureRuleEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -53,9 +53,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** The bank fee of a transfer, kept as its own expense. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transactions` ADD COLUMN `feeOfTransferId` INTEGER")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "vytraty.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

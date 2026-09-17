@@ -12,6 +12,7 @@ import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.data.prefs.SettingsRepository
 import ua.vytraty.app.domain.MerchantNormalizer
 import ua.vytraty.app.domain.Money
+import ua.vytraty.app.domain.parser.BankSource
 import ua.vytraty.app.domain.parser.ParsedPayment
 import ua.vytraty.app.domain.parser.ParserRegistry
 import ua.vytraty.app.domain.parser.RuleMatcher
@@ -54,8 +55,10 @@ class RecordParsedPaymentUseCase(
 
         val parsed = registry.parse(packageName, title, text)
         if (parsed == null) {
-            // Google Play services posts many unrelated notifications; only log the ones that look like payments.
+            // Google Play services and Telegram post many unrelated notifications; personal chats never
+            // reach the store — only messages with an amount in them are kept.
             if (packageName == "com.google.android.gms") return Result.Disabled
+            if (BankSource.byPackage(packageName) == BankSource.TELEGRAM) return Result.Disabled
             val id = logDao.insert(
                 NotificationLogEntity(
                     packageName = packageName, title = title, text = text, postedAt = postedAt,

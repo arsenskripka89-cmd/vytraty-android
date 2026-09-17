@@ -76,6 +76,7 @@ import ua.vytraty.app.ui.components.SectionHeader
 import ua.vytraty.app.ui.components.StatTile
 import ua.vytraty.app.ui.components.WalletIcon
 import ua.vytraty.app.ui.components.appViewModel
+import ua.vytraty.app.ui.components.bankOrGuess
 import ua.vytraty.app.ui.components.toColor
 import ua.vytraty.app.ui.history.TransactionRowItem
 import ua.vytraty.app.ui.theme.ExpenseRed
@@ -234,7 +235,7 @@ fun OverviewScreen(
             item {
                 SectionHeader("Гаманці") { TextButton(onClick = onOpenWallets) { Text("Усі") } }
                 LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    val byBank = s.wallets.sortedBy { BankSource.byCode(it.wallet.bankCode)?.displayName ?: "\uFFFF" }
+                    val byBank = s.wallets.sortedBy { it.wallet.bankOrGuess()?.displayName ?: "\uFFFF" }
                 items(byBank, key = { it.wallet.id }) { wb -> WalletCard(wb, onClick = onOpenWallets) }
                 }
             }
@@ -269,7 +270,7 @@ fun WalletCard(wb: WalletWithBalance, onClick: () -> Unit) {
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                WalletIcon(wb.wallet.type, 0xFF37474F, size = 28, bankCode = wb.wallet.bankCode)
+                WalletIcon(wb.wallet, size = 28)
                 Spacer(Modifier.width(8.dp))
                 Text(wb.wallet.name, color = Color.White, maxLines = 1, style = MaterialTheme.typography.labelLarge)
             }

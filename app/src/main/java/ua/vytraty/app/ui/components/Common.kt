@@ -179,6 +179,7 @@ fun bankColor(bank: BankSource?): Long = when (bank) {
     BankSource.OSCHADBANK -> 0xFF00A650
     BankSource.PUMB -> 0xFFE30613
     BankSource.GOOGLE_PAY -> 0xFF4285F4
+    BankSource.TELEGRAM -> 0xFF2AABEE
     else -> 0xFF607D8B
 }
 
@@ -205,6 +206,15 @@ fun BankLogo(bank: BankSource?, size: Int = 40) {
             )
         }
     }
+}
+
+/** The bank of a wallet: the chosen one, or a guess from its name so the logo shows up anyway. */
+fun WalletEntity.bankOrGuess(): BankSource? = BankSource.byCode(bankCode) ?: BankSource.guessByName(name)
+
+@Composable
+fun WalletIcon(wallet: WalletEntity, size: Int = 40) {
+    val bank = wallet.bankOrGuess()
+    if (bank != null) BankLogo(bank, size) else WalletIcon(wallet.type, wallet.color, size)
 }
 
 @Composable
@@ -376,8 +386,8 @@ fun WalletPickerSheet(wallets: List<WalletEntity>, selectedId: Long?, onSelect: 
             items(wallets, key = { it.id }) { w ->
                 ListItem(
                     headlineContent = { Text(w.name) },
-                    supportingContent = { Text(listOfNotNull(w.currency, BankSource.byCode(w.bankCode)?.displayName, w.cardLast4?.let { "•••• $it" }).joinToString(" · ")) },
-                    leadingContent = { WalletIcon(w.type, w.color, bankCode = w.bankCode) },
+                    supportingContent = { Text(listOfNotNull(w.currency, w.bankOrGuess()?.displayName, w.cardLast4?.let { "•••• $it" }).joinToString(" · ")) },
+                    leadingContent = { WalletIcon(w) },
                     trailingContent = { if (selectedId == w.id) Icon(Icons.Filled.Check, null) },
                     modifier = Modifier.clickable { onSelect(w) },
                 )

@@ -64,6 +64,8 @@ data class TransactionEntity(
     /** Transfers between currencies: what actually arrived. null = the same amount as was sent. */
     val receivedMinor: Long? = null,
     val receivedCurrency: String? = null,
+    /** Set on the expense that holds the bank fee of transfer [feeOfTransferId]. */
+    val feeOfTransferId: Long? = null,
     val externalId: String? = null,
     val notificationLogId: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),

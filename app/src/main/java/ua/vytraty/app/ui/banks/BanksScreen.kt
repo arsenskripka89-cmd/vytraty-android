@@ -130,7 +130,8 @@ fun BanksScreen(onBack: () -> Unit) {
             Text("Через сповіщення", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Приват24, Raiffeisen, Revolut, Ощадбанк і ПУМБ не мають відкритого особистого API, тому їх платежі зчитуються зі сповіщень. " +
-                    "Увімкніть сповіщення про операції в самому банківському застосунку.",
+                    "Увімкніть сповіщення про операції в самому банківському застосунку. Якщо банк надсилає транзакції в Telegram " +
+                    "(як бот ПриватБанку) — увімкніть Telegram: зі сповіщень Telegram беруться лише повідомлення із сумою, листування не зберігається.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (!listenerOn) {
