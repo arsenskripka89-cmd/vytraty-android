@@ -62,7 +62,13 @@ import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Savings
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.foundation.Image
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DatePicker
+import androidx.compose.foundation.Image
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -80,17 +86,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
 import ua.vytraty.app.data.db.CategoryEntity
 import ua.vytraty.app.data.db.TxKind
 import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.data.db.WalletType
 import ua.vytraty.app.domain.Dates
 import ua.vytraty.app.domain.Money
+import ua.vytraty.app.domain.parser.BankSource
 import ua.vytraty.app.ui.theme.ExpenseRed
 import ua.vytraty.app.ui.theme.IncomeGreen
 import ua.vytraty.app.ui.theme.TransferBlue
@@ -157,8 +168,50 @@ fun CategoryBadge(icon: String?, color: Long?, size: Int = 40) {
     }
 }
 
+/** Brand colour used for a bank badge when its app is not installed. */
+fun bankColor(bank: BankSource?): Long = when (bank) {
+    BankSource.MONOBANK -> 0xFF111111
+    BankSource.PRIVATBANK -> 0xFF2E9B51
+    BankSource.RAIFFEISEN -> 0xFFE3B505
+    BankSource.REVOLUT -> 0xFF23262B
+    BankSource.OSCHADBANK -> 0xFF00A650
+    BankSource.PUMB -> 0xFFE30613
+    BankSource.GOOGLE_PAY -> 0xFF4285F4
+    else -> 0xFF607D8B
+}
+
+/**
+ * Logo of a bank: the real icon of its app when it is installed on the phone, otherwise a coloured
+ * badge with the first letter. No logos are bundled with the app.
+ */
 @Composable
-fun WalletIcon(type: WalletType, color: Long, size: Int = 40) {
+fun BankLogo(bank: BankSource?, size: Int = 40) {
+    val context = LocalContext.current
+    val bitmap = remember(bank, size) {
+        bank?.packages?.firstNotNullOfOrNull { pkg ->
+            runCatching { context.packageManager.getApplicationIcon(pkg).toBitmap(size * 3, size * 3).asImageBitmap() }.getOrNull()
+        }
+    }
+    if (bitmap != null) {
+        Image(bitmap, contentDescription = bank?.displayName, modifier = Modifier.size(size.dp).clip(CircleShape))
+    } else {
+        Box(Modifier.size(size.dp).background(bankColor(bank).toColor(), CircleShape), contentAlignment = Alignment.Center) {
+            Text(
+                bank?.displayName?.firstOrNull()?.uppercase() ?: "?",
+                color = Color.White, fontWeight = FontWeight.Bold,
+                style = if (size >= 36) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
+}
+
+@Composable
+fun WalletIcon(type: WalletType, color: Long, size: Int = 40, bankCode: String? = null) {
+    val bank = BankSource.byCode(bankCode)
+    if (bank != null) {
+        BankLogo(bank, size)
+        return
+    }
     val c = color.toColor()
     val icon = when (type) {
         WalletType.CASH -> Icons.Filled.Payments
@@ -167,6 +220,23 @@ fun WalletIcon(type: WalletType, color: Long, size: Int = 40) {
     }
     Box(Modifier.size(size.dp).background(c, CircleShape), contentAlignment = Alignment.Center) {
         Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size((size * 0.55).dp))
+    }
+}
+
+/** Dropdown with the currencies the app knows; replaces typing a code by hand. */
+@Composable
+fun CurrencyPicker(value: String, onChange: (String) -> Unit, label: String = "Валюта", modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
+    Box(modifier) {
+        PickerField(label, "$value  ${Money.symbol(value)}", onClick = { open = true })
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Money.currencies.forEach { cur ->
+                DropdownMenuItem(
+                    text = { Text("$cur  ${Money.symbol(cur)}") },
+                    onClick = { onChange(cur); open = false },
+                )
+            }
+        }
     }
 }
 
@@ -278,8 +348,8 @@ fun WalletPickerSheet(wallets: List<WalletEntity>, selectedId: Long?, onSelect: 
             items(wallets, key = { it.id }) { w ->
                 ListItem(
                     headlineContent = { Text(w.name) },
-                    supportingContent = { Text(listOfNotNull(w.currency, w.cardLast4?.let { "•••• $it" }).joinToString(" · ")) },
-                    leadingContent = { WalletIcon(w.type, w.color) },
+                    supportingContent = { Text(listOfNotNull(w.currency, BankSource.byCode(w.bankCode)?.displayName, w.cardLast4?.let { "•••• $it" }).joinToString(" · ")) },
+                    leadingContent = { WalletIcon(w.type, w.color, bankCode = w.bankCode) },
                     trailingContent = { if (selectedId == w.id) Icon(Icons.Filled.Check, null) },
                     modifier = Modifier.clickable { onSelect(w) },
                 )

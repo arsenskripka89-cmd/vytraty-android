@@ -3,6 +3,7 @@
 package ua.vytraty.app.ui.wallets
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +26,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -51,16 +54,22 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import ua.vytraty.app.data.db.RuleType
 import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.data.db.WalletType
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Money
 import ua.vytraty.app.domain.observeWalletBalances
 import ua.vytraty.app.ui.components.AppScaffold
+import ua.vytraty.app.ui.components.BankLogo
 import ua.vytraty.app.ui.components.ColorPicker
+import ua.vytraty.app.ui.components.CurrencyPicker
+import ua.vytraty.app.ui.components.PickerField
 import ua.vytraty.app.ui.components.SectionHeader
 import ua.vytraty.app.ui.components.WalletIcon
 import ua.vytraty.app.ui.components.appViewModel
+import ua.vytraty.app.ui.rules.WalletRulesSection
+import ua.vytraty.app.domain.parser.BankSource
 
 class WalletsViewModel(c: AppContainer) : ViewModel() {
     val wallets = observeWalletBalances(c.db, includeArchived = true).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -78,15 +87,34 @@ fun WalletsScreen(onEdit: (Long) -> Unit, onBack: () -> Unit) {
                 val byCurrency = active.groupBy { it.wallet.currency }.map { (cur, list) -> Money.format(list.sumOf { it.balanceMinor }, cur) }
                 Text("Разом: ${byCurrency.joinToString(" · ")}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(16.dp))
             }
-            items(active, key = { it.wallet.id }) { wb ->
-                ListItem(
-                    headlineContent = { Text(wb.wallet.name + if (wb.wallet.isDefault) "  (за замовчуванням)" else "") },
-                    supportingContent = { Text(listOfNotNull(walletTypeLabel(wb.wallet.type), wb.wallet.cardLast4?.let { "•••• $it" }, wb.wallet.bankCode?.let { "Monobank" }).joinToString(" · ")) },
-                    leadingContent = { WalletIcon(wb.wallet.type, wb.wallet.color) },
-                    trailingContent = { Text(Money.format(wb.balanceMinor, wb.wallet.currency), fontWeight = FontWeight.SemiBold) },
-                    modifier = Modifier.clickable { onEdit(wb.wallet.id) },
-                )
-            }
+            // Cards of one bank stand together; wallets without a bank come last.
+            active.groupBy { BankSource.byCode(it.wallet.bankCode) }
+                .toList()
+                .sortedBy { (bank, _) -> bank?.displayName ?: "\uFFFF" }
+                .forEach { (bank, group) ->
+                    item {
+                        Row(Modifier.fillMaxWidth().padding(16.dp, 12.dp, 16.dp, 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            BankLogo(bank, 24)
+                            Spacer(Modifier.padding(4.dp))
+                            Text(bank?.displayName ?: "Без банку", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                            Text(
+                                group.groupBy { it.wallet.currency }
+                                    .map { (cur, list) -> Money.format(list.sumOf { it.balanceMinor }, cur) }
+                                    .joinToString(" · "),
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
+                    items(group, key = { it.wallet.id }) { wb ->
+                        ListItem(
+                            headlineContent = { Text(wb.wallet.name + if (wb.wallet.isDefault) "  (за замовчуванням)" else "") },
+                            supportingContent = { Text(listOfNotNull(walletTypeLabel(wb.wallet.type), wb.wallet.cardLast4?.let { "•••• $it" }).joinToString(" · ")) },
+                            leadingContent = { WalletIcon(wb.wallet.type, wb.wallet.color, bankCode = wb.wallet.bankCode) },
+                            trailingContent = { Text(Money.format(wb.balanceMinor, wb.wallet.currency), fontWeight = FontWeight.SemiBold) },
+                            modifier = Modifier.clickable { onEdit(wb.wallet.id) },
+                        )
+                    }
+                }
             if (archived.isNotEmpty()) {
                 item { SectionHeader("Архів") }
                 items(archived, key = { it.wallet.id }) { wb ->
@@ -117,6 +145,8 @@ data class WalletForm(
 class WalletEditViewModel(private val c: AppContainer, private val id: Long) : ViewModel() {
     val form = MutableStateFlow(WalletForm())
     val done = MutableStateFlow(false)
+    val rules = c.db.captureRuleDao().observeForTarget(RuleType.WALLET, id)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
         viewModelScope.launch {
@@ -144,16 +174,19 @@ class WalletEditViewModel(private val c: AppContainer, private val id: Long) : V
 
     fun delete() = viewModelScope.launch {
         c.db.walletDao().byId(id)?.let { c.db.walletDao().delete(it) }
+        c.db.captureRuleDao().deleteForTarget(RuleType.WALLET, id)
         done.value = true
     }
 }
 
 @Composable
-fun WalletEditScreen(id: Long, onBack: () -> Unit) {
+fun WalletEditScreen(id: Long, onBack: () -> Unit, onEditRule: (Long) -> Unit) {
     val vm = appViewModel(key = "wallet$id") { WalletEditViewModel(it, id) }
     val f by vm.form.collectAsStateWithLifecycle()
     val done by vm.done.collectAsStateWithLifecycle()
+    val rules by vm.rules.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
+    var showBank by remember { mutableStateOf(false) }
     LaunchedEffect(done) { if (done) onBack() }
 
     AppScaffold(
@@ -170,12 +203,29 @@ fun WalletEditScreen(id: Long, onBack: () -> Unit) {
             }
             Spacer(Modifier.height(12.dp))
             Row {
-                OutlinedTextField(f.currency, { v -> vm.update { copy(currency = v.take(3)) } }, label = { Text("Валюта") }, singleLine = true, modifier = Modifier.weight(1f))
+                CurrencyPicker(f.currency, onChange = { v -> vm.update { copy(currency = v) } }, modifier = Modifier.weight(1f))
                 Spacer(Modifier.padding(6.dp))
                 OutlinedTextField(
                     f.initialBalance, { v -> vm.update { copy(initialBalance = v) } }, label = { Text("Початковий баланс") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.weight(2f),
                 )
+            }
+            Spacer(Modifier.height(12.dp))
+            Box {
+                PickerField(
+                    "Банк", BankSource.byCode(f.bankCode)?.displayName ?: "Не вказано", onClick = { showBank = true },
+                    leading = { BankLogo(BankSource.byCode(f.bankCode), 24) },
+                )
+                DropdownMenu(expanded = showBank, onDismissRequest = { showBank = false }) {
+                    DropdownMenuItem(text = { Text("Не вказано") }, onClick = { vm.update { copy(bankCode = null) }; showBank = false })
+                    BankSource.forWallets.forEach { b ->
+                        DropdownMenuItem(
+                            text = { Text(b.displayName) },
+                            leadingIcon = { BankLogo(b, 24) },
+                            onClick = { vm.update { copy(bankCode = b.name) }; showBank = false },
+                        )
+                    }
+                }
             }
             if (f.type != WalletType.CASH) {
                 Spacer(Modifier.height(12.dp))
@@ -196,6 +246,10 @@ fun WalletEditScreen(id: Long, onBack: () -> Unit) {
                     Text("Сюди записуються платежі зі сповіщень, якщо картку не розпізнано", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = f.isDefault, onCheckedChange = { v -> vm.update { copy(isDefault = v) } })
+            }
+            if (id > 0) {
+                Spacer(Modifier.height(16.dp))
+                WalletRulesSection(rules, onAdd = { onEditRule(0) }, onOpen = { onEditRule(it) })
             }
             if (id > 0) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("В архіві", Modifier.weight(1f))

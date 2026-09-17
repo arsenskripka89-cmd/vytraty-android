@@ -69,6 +69,7 @@ import ua.vytraty.app.notifications.PaymentNotificationListener
 import ua.vytraty.app.ui.components.AppScaffold
 import ua.vytraty.app.ui.components.CategoryBadge
 import ua.vytraty.app.ui.components.EmptyState
+import ua.vytraty.app.ui.components.CurrencyPicker
 import ua.vytraty.app.ui.components.PickerField
 import ua.vytraty.app.ui.components.WalletPickerSheet
 import ua.vytraty.app.ui.components.appViewModel
@@ -111,6 +112,7 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
 
     fun setCapture(v: Boolean) = viewModelScope.launch { c.settings.setCaptureEnabled(v) }
     fun setNotifyUncategorized(v: Boolean) = viewModelScope.launch { c.settings.setNotifyUncategorized(v) }
+    fun setOnlyMatchedWallet(v: Boolean) = viewModelScope.launch { c.settings.setOnlyMatchedWallet(v) }
     fun setDefaultWallet(id: Long) = viewModelScope.launch { c.db.walletDao().setDefault(id) }
     fun setMainCurrency(v: String) = viewModelScope.launch { c.settings.setMainCurrency(v) }
     fun applyRules() = viewModelScope.launch { message.value = "Категорію призначено ${c.assignCategory.applyRulesToUncategorized()} операціям" }
@@ -152,7 +154,6 @@ fun SettingsScreen(onBack: () -> Unit, onLog: () -> Unit, onTester: () -> Unit, 
     val message by vm.message.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showWallet by remember { mutableStateOf(false) }
-    var showCurrency by remember { mutableStateOf(false) }
     val listenerOn = PaymentNotificationListener.isEnabled(context)
     val defaultWallet = wallets.firstOrNull { it.isDefault }
 
@@ -205,19 +206,21 @@ fun SettingsScreen(onBack: () -> Unit, onLog: () -> Unit, onTester: () -> Unit, 
                 }
             }
             SwitchRow("Автозахоплення платежів", "Створювати операції зі сповіщень", s.captureEnabled) { vm.setCapture(it) }
-            SwitchRow("Сповіщати про операції без категорії", "Тап по сповіщенню відкриває операцію для вибору категорії", s.notifyUncategorized) { vm.setNotifyUncategorized(it) }
+            SwitchRow("Сповіщати про операції без категорії", "У сповіщенні — кнопки популярних категорій цієї картки", s.notifyUncategorized) { vm.setNotifyUncategorized(it) }
+            SwitchRow(
+                "Записувати лише за правилом картки",
+                "Реклама й інші сповіщення без правила не стають витратами — вони чекають у сховищі сповіщень",
+                s.onlyMatchedWallet,
+            ) { vm.setOnlyMatchedWallet(it) }
             Column(Modifier.padding(16.dp, 8.dp)) {
                 PickerField("Гаманець за замовчуванням для сповіщень", defaultWallet?.name ?: "Не обрано", onClick = { showWallet = true })
                 Text("Використовується, коли картку у сповіщенні не розпізнано. Щоб розпізнавалась — вкажіть останні 4 цифри в гаманці.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
             Column(Modifier.padding(16.dp, 8.dp)) {
-                PickerField("Основна валюта", s.mainCurrency, onClick = { showCurrency = true })
-                DropdownMenu(expanded = showCurrency, onDismissRequest = { showCurrency = false }) {
-                    listOf("UAH", "USD", "EUR", "PLN", "GBP").forEach { cur -> DropdownMenuItem(text = { Text(cur) }, onClick = { vm.setMainCurrency(cur); showCurrency = false }) }
-                }
+                CurrencyPicker(s.mainCurrency, onChange = { vm.setMainCurrency(it) }, label = "Основна валюта")
             }
             HorizontalDivider()
-            ListItem(headlineContent = { Text("Журнал сповіщень") }, supportingContent = { Text(if (unparsed > 0) "Нерозпізнаних: $unparsed" else "Усі захоплені сповіщення") }, modifier = Modifier.clickable(onClick = onLog))
+            ListItem(headlineContent = { Text("Сховище сповіщень") }, supportingContent = { Text(if (unparsed > 0) "Нерозпізнаних: $unparsed" else "Усі сповіщення за класами") }, modifier = Modifier.clickable(onClick = onLog))
             ListItem(headlineContent = { Text("Тестер парсера") }, supportingContent = { Text("Вставте текст сповіщення і перевірте, як він розпізнається") }, modifier = Modifier.clickable(onClick = onTester))
             ListItem(headlineContent = { Text("Правила мерчантів") }, supportingContent = { Text("Магазин → категорія") }, modifier = Modifier.clickable(onClick = onRules))
             ListItem(headlineContent = { Text("Застосувати правила до операцій без категорії") }, modifier = Modifier.clickable { vm.applyRules() })
@@ -238,42 +241,6 @@ private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChang
         }
         Switch(checked = checked, onCheckedChange = onChange)
     }
-}
-
-// ---------------- Notification log ----------------
-
-class NotificationLogViewModel(private val c: AppContainer) : ViewModel() {
-    val entries = c.db.notificationLogDao().observeRecent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    fun clear() = viewModelScope.launch { c.db.notificationLogDao().clear() }
-}
-
-@Composable
-fun NotificationLogScreen(onBack: () -> Unit, onOpenTransaction: (Long) -> Unit) {
-    val vm = appViewModel { NotificationLogViewModel(it) }
-    val entries by vm.entries.collectAsStateWithLifecycle()
-    AppScaffold(title = "Журнал сповіщень", onBack = onBack, actions = { IconButton(onClick = { vm.clear() }) { Icon(Icons.Filled.DeleteSweep, "Очистити") } }) { padding ->
-        if (entries.isEmpty()) EmptyState("Поки що жодного платіжного сповіщення не захоплено. Перевірте доступ до сповіщень і зробіть оплату.", Modifier.padding(padding))
-        LazyColumn(Modifier.padding(padding)) {
-            items(entries, key = { it.id }) { e -> LogRow(e, onOpenTransaction) }
-        }
-    }
-}
-
-@Composable
-private fun LogRow(e: NotificationLogEntity, onOpenTransaction: (Long) -> Unit) {
-    val bank = BankSource.byPackage(e.packageName)?.displayName ?: e.packageName
-    ListItem(
-        headlineContent = { Text(listOfNotNull(e.title, e.text).joinToString(" — ").ifBlank { "(порожньо)" }, maxLines = 3) },
-        overlineContent = { Text("$bank · ${Dates.formatDateTime(e.postedAt)}") },
-        supportingContent = {
-            Text(
-                if (e.parsed) "Розпізнано → операція №${e.transactionId}" else "Не розпізнано: ${e.reason ?: ""}",
-                color = if (e.parsed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-            )
-        },
-        modifier = Modifier.clickable(enabled = e.transactionId != null) { e.transactionId?.let(onOpenTransaction) },
-    )
-    HorizontalDivider()
 }
 
 // ---------------- Parser tester ----------------

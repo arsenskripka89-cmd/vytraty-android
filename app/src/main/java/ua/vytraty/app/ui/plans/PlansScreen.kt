@@ -252,7 +252,8 @@ fun PlannedPaymentEditScreen(id: Long, onBack: () -> Unit) {
             OutlinedTextField(f.title, { v -> vm.update { copy(title = v, error = null) } }, label = { Text("Назва (напр. Оренда)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
-                f.amount, { v -> vm.update { copy(amount = v, error = null) } }, label = { Text("Сума") }, suffix = { Text(Money.symbol(f.currency)) },
+                f.amount, { v -> vm.update { copy(amount = v, error = null) } }, label = { Text("Сума") },
+                suffix = { Text(Money.symbol(f.currency)) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
@@ -350,7 +351,8 @@ fun BudgetEditScreen(id: Long, onBack: () -> Unit) {
             PickerField("Категорія", category?.name ?: "Усі витрати", onClick = { showCategory = true }, leading = { CategoryBadge(category?.icon ?: "wallet", category?.color, 24) })
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
-                f.limit, { v -> vm.update { copy(limit = v, error = null) } }, label = { Text("Ліміт на місяць") }, suffix = { Text(Money.symbol(f.currency)) },
+                f.limit, { v -> vm.update { copy(limit = v, error = null) } }, label = { Text("Ліміт на місяць") },
+                suffix = { Text(Money.symbol(f.currency)) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             f.error?.let { Spacer(Modifier.height(8.dp)); Text(it, color = MaterialTheme.colorScheme.error) }

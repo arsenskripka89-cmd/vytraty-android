@@ -27,6 +27,16 @@ enum class BankSource(val displayName: String, val packages: List<String>) {
 
     companion object {
         fun byPackage(pkg: String): BankSource? = entries.firstOrNull { pkg in it.packages }
+
+        /** [ua.vytraty.app.data.db.WalletEntity.bankCode] → bank ("mono" comes from the Monobank connector). */
+        fun byCode(code: String?): BankSource? = when {
+            code.isNullOrBlank() -> null
+            code.equals("mono", true) -> MONOBANK
+            else -> entries.firstOrNull { it.name.equals(code, true) }
+        }
+
+        /** Banks a wallet can belong to (Google Pay is a payment app, not a bank). */
+        val forWallets: List<BankSource> get() = entries.filter { it != GOOGLE_PAY && it != OTHER }
         val allPackages: Set<String> get() = entries.flatMap { it.packages }.toSet()
     }
 }
@@ -36,11 +46,13 @@ data class AmountMatch(val minor: Long, val currency: String, val negative: Bool
 
 object AmountExtractor {
     // "1 234,56", "1,234.56", "1234", "250.00"; a comma followed by exactly 3 digits is a thousands separator.
+    /** A space, including the non-breaking ones banks put between the number and the currency (java \s matches neither). */
+    private const val SP = """[\s   ]"""
     private const val NUM = """(?:\d{1,3}(?:[ \u00A0\u202F,]\d{3})+(?!\d)|\d+)(?:[.,]\d{1,2}(?!\d))?"""
     private const val CUR_AFTER = """(₴|грн\.?|uah|\$|usd|€|eur|£|gbp|zł|pln|czk|kč|try|₺|chf)"""
     private const val CUR_BEFORE = """(₴|\$|€|£|₺)"""
-    private val amountThenCurrency = Regex("""([+\-−–]?)\s*($NUM)\s*$CUR_AFTER(?![a-zа-яіїє])""", RegexOption.IGNORE_CASE)
-    private val currencyThenAmount = Regex("""([+\-−–]?)\s*$CUR_BEFORE\s*($NUM)""", RegexOption.IGNORE_CASE)
+    private val amountThenCurrency = Regex("""([+\-−–]?)$SP*($NUM)$SP*$CUR_AFTER(?![a-zа-яіїє])""", RegexOption.IGNORE_CASE)
+    private val currencyThenAmount = Regex("""([+\-−–]?)$SP*$CUR_BEFORE$SP*($NUM)""", RegexOption.IGNORE_CASE)
 
     fun findAll(text: String): List<AmountMatch> {
         val out = mutableListOf<AmountMatch>()
@@ -109,7 +121,13 @@ object TextCues {
     )
     private val balanceWords = Regex("""(баланс|balance|доступно|available|залишок)\s*[:\-]?\s*""", RegexOption.IGNORE_CASE)
 
+    private val cardLabelPattern = Regex("""(?iu)(?:з картки|с карты|з карти|from card|картка|карта|card)\s+([\p{L}\p{N}][\p{L}\p{N} .\-]{1,28})""")
+
     fun cardLast4(text: String): String? = cardPatterns.firstNotNullOfOrNull { it.find(text)?.groupValues?.get(1) }
+
+    /** "30,91 € с карты Privat EUR" → "Privat EUR": the card name a notification mentions. */
+    fun cardLabel(text: String): String? = cardLabelPattern.find(text)?.groupValues?.get(1)?.trim()
+        ?.takeIf { it.length >= 2 && !it.all { c -> c.isDigit() } }
 
     fun looksLikeIncome(text: String) = incomeWords.containsMatchIn(text)
     fun looksLikeExpense(text: String) = expenseWords.containsMatchIn(text)

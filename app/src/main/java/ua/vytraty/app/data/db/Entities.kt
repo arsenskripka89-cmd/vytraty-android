@@ -128,6 +128,8 @@ data class NotificationLogEntity(
     val parsed: Boolean,
     val transactionId: Long? = null,
     val reason: String? = null,
+    /** one of [LogStatus]; null for rows captured before rules existed */
+    val status: String? = null,
 )
 
 /** Transaction joined with its wallet and category (for lists). */
@@ -152,6 +154,48 @@ data class TransactionRow(
 )
 
 data class CategorySum(val categoryId: Long?, val total: Long)
+data class CurrencySum(val currency: String, val expense: Long, val income: Long)
 data class MonthSum(val monthKey: String, val expense: Long, val income: Long)
 data class DaySum(val dayKey: String, val expense: Long, val income: Long)
 data class WalletBalance(val walletId: Long, val delta: Long)
+
+enum class RuleType { WALLET, CATEGORY }
+
+/**
+ * User rule that maps a notification to a wallet or a category: the notification must come from
+ * [bank] (null = any app) and contain [pattern]. Several rules may point to the same target.
+ */
+@Entity(tableName = "capture_rules")
+data class CaptureRuleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val type: RuleType,
+    /** walletId for [RuleType.WALLET], categoryId for [RuleType.CATEGORY] */
+    val targetId: Long,
+    /** [ua.vytraty.app.domain.parser.BankSource] name of the source app, null = any */
+    val bank: String? = null,
+    val pattern: String,
+    val hits: Int = 0,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** How the capture rules classified one notification; stored in [NotificationLogEntity.status]. */
+object LogStatus {
+    /** wallet and category found by rules */
+    const val RECORDED = "RECORDED"
+    /** wallet found, category unknown */
+    const val NO_CATEGORY = "NO_CATEGORY"
+    /** payment, but no wallet rule matched */
+    const val NO_WALLET = "NO_WALLET"
+    /** not a payment: no amount in the text */
+    const val NO_AMOUNT = "NO_AMOUNT"
+
+    val all = listOf(RECORDED, NO_CATEGORY, NO_WALLET, NO_AMOUNT)
+
+    fun label(status: String?) = when (status) {
+        RECORDED -> "Пройшло правила"
+        NO_CATEGORY -> "Картка є, без категорії"
+        NO_WALLET -> "Не пройшло правило картки"
+        NO_AMOUNT -> "Не платіж"
+        else -> "Невідомо"
+    }
+}

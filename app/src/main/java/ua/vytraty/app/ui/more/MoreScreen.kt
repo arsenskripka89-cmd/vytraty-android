@@ -26,7 +26,7 @@ import ua.vytraty.app.ui.components.AppScaffold
 @Composable
 fun MoreScreen(
     onWallets: () -> Unit, onCategories: () -> Unit, onBanks: () -> Unit,
-    onSettings: () -> Unit, onRules: () -> Unit, onLog: () -> Unit,
+    onSettings: () -> Unit, onRules: () -> Unit, onCaptureRules: () -> Unit, onLog: () -> Unit,
 ) {
     AppScaffold(title = "Ще") { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
@@ -34,8 +34,9 @@ fun MoreScreen(
             Item(Icons.Filled.Category, "Категорії", "Категорії витрат і доходів", onCategories)
             Item(Icons.Filled.AccountBalance, "Банки та інтеграції", "Monobank API, сповіщення інших банків", onBanks)
             HorizontalDivider()
+            Item(Icons.Filled.Rule, "Правила розпізнавання", "Яке сповіщення до якої картки й категорії належить", onCaptureRules)
             Item(Icons.Filled.Rule, "Правила мерчантів", "Що застосунок запам'ятав: магазин → категорія", onRules)
-            Item(Icons.Filled.History, "Журнал сповіщень", "Усі захоплені платіжні сповіщення", onLog)
+            Item(Icons.Filled.History, "Сховище сповіщень", "Усі сповіщення банків за класами: які пройшли правила, які ні", onLog)
             HorizontalDivider()
             Item(Icons.Filled.Settings, "Налаштування", "Доступ до сповіщень, експорт, тестер парсера", onSettings)
             Text(

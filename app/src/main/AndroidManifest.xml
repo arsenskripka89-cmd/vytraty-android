@@ -9,6 +9,19 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Reading the icon of a bank app (wallet logos) needs the package to be visible on Android 11+ -->
+    <queries>
+        <package android:name="com.google.android.apps.walletnfcrel" />
+        <package android:name="com.ftband.mono" />
+        <package android:name="ua.privatbank.ap24" />
+        <package android:name="ua.raiffeisen.myraif" />
+        <package android:name="ua.aval.dbo.client.android" />
+        <package android:name="com.revolut.revolut" />
+        <package android:name="ua.oschadbank.online" />
+        <package android:name="com.pumb.online" />
+        <package android:name="ua.pumb.pumbonline" />
+    </queries>
+
     <application
         android:name=".VytratyApp"
         android:allowBackup="true"
@@ -44,6 +57,8 @@
         </service>
 
         <receiver android:name=".notifications.ReminderReceiver" android:exported="false" />
+
+        <receiver android:name=".notifications.CategoryActionReceiver" android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

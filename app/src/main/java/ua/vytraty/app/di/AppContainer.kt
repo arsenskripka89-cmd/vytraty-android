@@ -8,6 +8,7 @@ import ua.vytraty.app.data.bank.monobank.MonobankApi
 import ua.vytraty.app.data.bank.monobank.MonobankConnector
 import ua.vytraty.app.data.db.AppDatabase
 import ua.vytraty.app.data.prefs.SettingsRepository
+import ua.vytraty.app.data.rates.ExchangeRates
 import ua.vytraty.app.data.update.UpdateChecker
 import ua.vytraty.app.domain.parser.ParserRegistry
 import ua.vytraty.app.domain.usecase.AssignCategoryUseCase
@@ -29,4 +30,5 @@ class AppContainer(context: Context) {
     val plannedPayments = PlannedPaymentService(context, db, reminderScheduler, budgetChecker)
     val monobank = MonobankConnector(MonobankApi.create(), db, settings, budgetChecker)
     val updateChecker = UpdateChecker(context)
+    val exchangeRates = ExchangeRates(settings)
 }

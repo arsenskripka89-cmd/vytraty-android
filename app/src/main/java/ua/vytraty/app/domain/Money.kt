@@ -14,6 +14,9 @@ object Money {
     private val format = DecimalFormat("#,##0.00", symbols)
     private val formatNoCents = DecimalFormat("#,##0", symbols)
 
+    /** Currencies offered in the pickers. */
+    val currencies = listOf("UAH", "USD", "EUR", "PLN", "GBP", "CZK", "CHF")
+
     fun symbol(currency: String): String = when (currency.uppercase()) {
         "UAH" -> "₴"
         "USD" -> "$"

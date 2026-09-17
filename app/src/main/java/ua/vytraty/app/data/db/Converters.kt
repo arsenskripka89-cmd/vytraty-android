@@ -9,6 +9,8 @@ class Converters {
     @TypeConverter fun stringToTxKind(v: String): TxKind = TxKind.valueOf(v)
     @TypeConverter fun txSourceToString(v: TxSource): String = v.name
     @TypeConverter fun stringToTxSource(v: String): TxSource = TxSource.valueOf(v)
+    @TypeConverter fun ruleTypeToString(v: RuleType): String = v.name
+    @TypeConverter fun stringToRuleType(v: String): RuleType = RuleType.valueOf(v)
     @TypeConverter fun recurrenceToString(v: Recurrence): String = v.name
     @TypeConverter fun stringToRecurrence(v: String): Recurrence = Recurrence.valueOf(v)
 }

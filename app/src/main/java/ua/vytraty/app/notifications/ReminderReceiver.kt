@@ -62,3 +62,31 @@ class BootReceiver : BroadcastReceiver() {
         }
     }
 }
+
+/** "Продукти"-style buttons under a captured payment: assigns that category without opening the app. */
+class CategoryActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != ACTION_ASSIGN) return
+        val txId = intent.getLongExtra(AppNotifications.EXTRA_TRANSACTION_ID, -1L)
+        val categoryId = intent.getLongExtra(AppNotifications.EXTRA_CATEGORY_ID, -1L)
+        if (txId <= 0 || categoryId <= 0) return
+        val app = context.applicationContext as VytratyApp
+        val pending = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                val outcome = app.container.assignCategory.assign(txId, categoryId)
+                if (outcome.otherUncategorizedSameMerchant.isNotEmpty()) {
+                    app.container.assignCategory.applyToOthers(outcome.otherUncategorizedSameMerchant, categoryId)
+                }
+                androidx.core.app.NotificationManagerCompat.from(context)
+                    .cancel(AppNotifications.capturedNotificationId(txId))
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    companion object {
+        const val ACTION_ASSIGN = "ua.vytraty.app.action.ASSIGN_CATEGORY"
+    }
+}

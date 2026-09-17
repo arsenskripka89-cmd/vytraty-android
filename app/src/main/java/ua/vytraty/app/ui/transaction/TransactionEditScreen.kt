@@ -58,6 +58,7 @@ import ua.vytraty.app.domain.Money
 import ua.vytraty.app.ui.components.AppScaffold
 import ua.vytraty.app.ui.components.CategoryBadge
 import ua.vytraty.app.ui.components.CategoryPickerSheet
+import ua.vytraty.app.ui.components.CurrencyPicker
 import ua.vytraty.app.ui.components.DatePickerField
 import ua.vytraty.app.ui.components.PickerField
 import ua.vytraty.app.ui.components.WalletIcon
@@ -215,12 +216,20 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
                 }
             }
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = f.amount, onValueChange = { v -> vm.update { copy(amount = v, error = null) } },
-                label = { Text("Сума") }, suffix = { Text(Money.symbol(f.currency ?: wallet?.currency ?: "UAH")) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,
-                isError = f.error != null && f.amount.isBlank(), modifier = Modifier.fillMaxWidth(),
-            )
+            Row {
+                OutlinedTextField(
+                    value = f.amount, onValueChange = { v -> vm.update { copy(amount = v, error = null) } },
+                    label = { Text("Сума") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,
+                    isError = f.error != null && f.amount.isBlank(), modifier = Modifier.weight(2f),
+                )
+                Spacer(Modifier.width(8.dp))
+                CurrencyPicker(
+                    f.currency ?: wallet?.currency ?: "UAH",
+                    onChange = { v -> vm.update { copy(currency = v) } },
+                    modifier = Modifier.weight(1.2f),
+                )
+            }
             Spacer(Modifier.height(12.dp))
             PickerField(
                 if (f.kind == TxKind.TRANSFER) "З гаманця" else "Гаманець", wallet?.name ?: "Оберіть",

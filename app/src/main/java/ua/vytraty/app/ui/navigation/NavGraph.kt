@@ -40,7 +40,9 @@ import ua.vytraty.app.ui.plans.BudgetEditScreen
 import ua.vytraty.app.ui.plans.PlannedPaymentEditScreen
 import ua.vytraty.app.ui.plans.PlansScreen
 import ua.vytraty.app.ui.settings.MerchantRulesScreen
-import ua.vytraty.app.ui.settings.NotificationLogScreen
+import ua.vytraty.app.ui.rules.CaptureRulesScreen
+import ua.vytraty.app.ui.rules.NotificationStoreScreen
+import ua.vytraty.app.ui.rules.RuleEditScreen
 import ua.vytraty.app.ui.settings.ParserTesterScreen
 import ua.vytraty.app.ui.settings.SettingsScreen
 import ua.vytraty.app.ui.transaction.TransactionEditScreen
@@ -58,11 +60,13 @@ object Routes {
     const val BANKS = "banks"
     const val SETTINGS = "settings"
     const val NOTIF_LOG = "notif_log"
+    const val CAPTURE_RULES = "capture_rules"
     const val PARSER_TESTER = "parser_tester"
     const val RULES = "rules"
 
     fun tx(id: Long = 0, kind: String = "EXPENSE") = "tx/$id?kind=$kind"
     fun wallet(id: Long = 0) = "wallet/$id"
+    fun rule(id: Long = 0, logId: Long = 0, walletId: Long = 0) = "rule/$id?logId=$logId&walletId=$walletId"
     fun category(id: Long = 0, kind: String = "EXPENSE") = "category/$id?kind=$kind"
     fun planned(id: Long = 0) = "planned/$id"
     fun budget(id: Long = 0) = "budget/$id"
@@ -135,6 +139,7 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
                     onOpenWallets = { nav.navigate(Routes.WALLETS) },
                     onOpenPlans = { nav.navigate(Routes.PLANS) },
                     onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                    onOpenStore = { nav.navigate(Routes.NOTIF_LOG) },
                 )
             }
             composable(Routes.HISTORY) { HistoryScreen(onOpenTransaction = { nav.navigate(Routes.tx(it)) }) }
@@ -152,6 +157,7 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
                     onBanks = { nav.navigate(Routes.BANKS) },
                     onSettings = { nav.navigate(Routes.SETTINGS) },
                     onRules = { nav.navigate(Routes.RULES) },
+                    onCaptureRules = { nav.navigate(Routes.CAPTURE_RULES) },
                     onLog = { nav.navigate(Routes.NOTIF_LOG) },
                 )
             }
@@ -171,7 +177,12 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
             }
             composable(Routes.WALLETS) { WalletsScreen(onEdit = { nav.navigate(Routes.wallet(it)) }, onBack = { nav.popBackStack() }) }
             composable("wallet/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
-                WalletEditScreen(id = entry.arguments?.getLong("id") ?: 0L, onBack = { nav.popBackStack() })
+                val walletId = entry.arguments?.getLong("id") ?: 0L
+                WalletEditScreen(
+                    id = walletId,
+                    onBack = { nav.popBackStack() },
+                    onEditRule = { ruleId -> nav.navigate(Routes.rule(id = ruleId, walletId = walletId)) },
+                )
             }
             composable(Routes.CATEGORIES) {
                 CategoriesScreen(onEdit = { id, kind -> nav.navigate(Routes.category(id, kind)) }, onBack = { nav.popBackStack() })
@@ -204,7 +215,27 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
                     onRules = { nav.navigate(Routes.RULES) },
                 )
             }
-            composable(Routes.NOTIF_LOG) { NotificationLogScreen(onBack = { nav.popBackStack() }, onOpenTransaction = { nav.navigate(Routes.tx(it)) }) }
+            composable(Routes.NOTIF_LOG) {
+                NotificationStoreScreen(onBack = { nav.popBackStack() }, onOpenRule = { logId -> nav.navigate(Routes.rule(logId = logId)) })
+            }
+            composable(Routes.CAPTURE_RULES) {
+                CaptureRulesScreen(onBack = { nav.popBackStack() }, onEdit = { nav.navigate(Routes.rule(id = it)) })
+            }
+            composable(
+                "rule/{id}?logId={logId}&walletId={walletId}",
+                arguments = listOf(
+                    navArgument("id") { type = NavType.LongType },
+                    navArgument("logId") { type = NavType.LongType; defaultValue = 0L },
+                    navArgument("walletId") { type = NavType.LongType; defaultValue = 0L },
+                ),
+            ) { entry ->
+                RuleEditScreen(
+                    id = entry.arguments?.getLong("id") ?: 0L,
+                    logId = entry.arguments?.getLong("logId") ?: 0L,
+                    walletId = entry.arguments?.getLong("walletId") ?: 0L,
+                    onBack = { nav.popBackStack() },
+                )
+            }
             composable(Routes.PARSER_TESTER) { ParserTesterScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.RULES) { MerchantRulesScreen(onBack = { nav.popBackStack() }) }
         }

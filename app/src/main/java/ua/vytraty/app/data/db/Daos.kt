@@ -53,6 +53,13 @@ interface CategoryDao {
     @Query("SELECT * FROM categories WHERE id = :id")
     suspend fun byId(id: Long): CategoryEntity?
 
+    /** Categories of [kind] ordered by how often they were used in [walletId]. */
+    @Query(
+        "SELECT c.* FROM categories c LEFT JOIN transactions t ON t.categoryId = c.id AND t.walletId = :walletId " +
+            "WHERE c.kind = :kind GROUP BY c.id ORDER BY COUNT(t.id) DESC, c.sortOrder LIMIT :limit"
+    )
+    suspend fun popularForWallet(walletId: Long, kind: TxKind, limit: Int): List<CategoryEntity>
+
     @Query("SELECT COUNT(*) FROM categories")
     suspend fun count(): Int
 
@@ -125,6 +132,14 @@ interface TransactionDao {
     fun observeDaySums(from: Long, to: Long, walletId: Long?): Flow<List<DaySum>>
 
     @Query(
+        "SELECT currency, " +
+            "SUM(CASE WHEN kind = 'EXPENSE' THEN amountMinor ELSE 0 END) AS expense, " +
+            "SUM(CASE WHEN kind = 'INCOME' THEN amountMinor ELSE 0 END) AS income " +
+            "FROM transactions WHERE timestamp BETWEEN :from AND :to GROUP BY currency"
+    )
+    fun observeSumsByCurrency(from: Long, to: Long): Flow<List<CurrencySum>>
+
+    @Query(
         "SELECT walletId, SUM(CASE WHEN kind = 'INCOME' THEN amountMinor ELSE -amountMinor END) AS delta " +
             "FROM transactions GROUP BY walletId"
     )
@@ -158,6 +173,31 @@ interface TransactionDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insert(t: TransactionEntity): Long
     @Update suspend fun update(t: TransactionEntity)
     @Query("DELETE FROM transactions WHERE id = :id") suspend fun deleteById(id: Long)
+}
+
+@Dao
+interface CaptureRuleDao {
+    @Query("SELECT * FROM capture_rules ORDER BY type, id")
+    fun observeAll(): Flow<List<CaptureRuleEntity>>
+
+    @Query("SELECT * FROM capture_rules ORDER BY LENGTH(pattern) DESC")
+    suspend fun all(): List<CaptureRuleEntity>
+
+    @Query("SELECT * FROM capture_rules WHERE type = :type AND targetId = :targetId ORDER BY id")
+    fun observeForTarget(type: RuleType, targetId: Long): Flow<List<CaptureRuleEntity>>
+
+    @Query("SELECT * FROM capture_rules WHERE id = :id")
+    suspend fun byId(id: Long): CaptureRuleEntity?
+
+    @Query("UPDATE capture_rules SET hits = hits + 1 WHERE id = :id")
+    suspend fun bumpHits(id: Long)
+
+    @Query("DELETE FROM capture_rules WHERE type = :type AND targetId = :targetId")
+    suspend fun deleteForTarget(type: RuleType, targetId: Long)
+
+    @Insert suspend fun insert(r: CaptureRuleEntity): Long
+    @Update suspend fun update(r: CaptureRuleEntity)
+    @Query("DELETE FROM capture_rules WHERE id = :id") suspend fun deleteById(id: Long)
 }
 
 @Dao
@@ -206,8 +246,17 @@ interface BudgetDao {
 
 @Dao
 interface NotificationLogDao {
-    @Query("SELECT * FROM notification_log ORDER BY postedAt DESC LIMIT 300")
+    @Query("SELECT * FROM notification_log ORDER BY postedAt DESC LIMIT 500")
     fun observeRecent(): Flow<List<NotificationLogEntity>>
+
+    @Query("SELECT * FROM notification_log WHERE id = :id")
+    suspend fun byId(id: Long): NotificationLogEntity?
+
+    @Query("SELECT COUNT(*) FROM notification_log WHERE status = :status AND postedAt > :since")
+    fun observeCountByStatus(status: String, since: Long): Flow<Int>
+
+    @Query("SELECT * FROM notification_log WHERE status IN (:statuses) AND postedAt > :since ORDER BY postedAt DESC LIMIT 200")
+    suspend fun byStatuses(statuses: List<String>, since: Long): List<NotificationLogEntity>
 
     @Query("SELECT COUNT(*) FROM notification_log WHERE parsed = 0")
     fun observeUnparsedCount(): Flow<Int>

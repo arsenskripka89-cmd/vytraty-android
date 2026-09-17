@@ -11,6 +11,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import ua.vytraty.app.MainActivity
+import ua.vytraty.app.data.db.CategoryEntity
 import ua.vytraty.app.R
 
 /** All app-originated notifications: channels, uncategorized prompt, reminders, budget alerts. */
@@ -21,6 +22,7 @@ object AppNotifications {
     const val CHANNEL_UPDATES = "updates"
 
     const val EXTRA_TRANSACTION_ID = "transactionId"
+    const val EXTRA_CATEGORY_ID = "categoryId"
     const val EXTRA_PLANNED_ID = "plannedId"
     const val EXTRA_OPEN_UPDATES = "openUpdates"
 
@@ -58,18 +60,43 @@ object AppNotifications {
         )
     }
 
-    fun showCapturedPayment(context: Context, transactionId: Long, title: String, body: String, needsCategory: Boolean) {
+    fun capturedNotificationId(transactionId: Long) = 2000 + (transactionId % 100000).toInt()
+
+    /**
+     * "Choose a category" prompt for a captured payment: one button per suggested category assigns it
+     * right from the notification shade, the last one opens the app.
+     */
+    fun showCapturedPayment(
+        context: Context,
+        transactionId: Long,
+        title: String,
+        body: String,
+        suggestions: List<CategoryEntity> = emptyList(),
+    ) {
         if (!canPost(context)) return
-        val n = NotificationCompat.Builder(context, CHANNEL_CAPTURED)
+        val builder = NotificationCompat.Builder(context, CHANNEL_CAPTURED)
             .setSmallIcon(R.drawable.ic_stat_wallet)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(openTransactionIntent(context, transactionId))
             .setAutoCancel(true)
-            .setPriority(if (needsCategory) NotificationCompat.PRIORITY_DEFAULT else NotificationCompat.PRIORITY_LOW)
-            .build()
-        NotificationManagerCompat.from(context).notify(2000 + (transactionId % 100000).toInt(), n)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        // Android shows at most three actions, so two categories plus "open" is the ceiling.
+        suggestions.take(2).forEachIndexed { i, cat ->
+            val intent = Intent(context, CategoryActionReceiver::class.java).apply {
+                action = CategoryActionReceiver.ACTION_ASSIGN
+                putExtra(EXTRA_TRANSACTION_ID, transactionId)
+                putExtra(EXTRA_CATEGORY_ID, cat.id)
+            }
+            val pi = PendingIntent.getBroadcast(
+                context, (transactionId % 100000).toInt() * 8 + i, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(0, cat.name, pi)
+        }
+        builder.addAction(0, "Перейти в програму", openTransactionIntent(context, transactionId))
+        NotificationManagerCompat.from(context).notify(capturedNotificationId(transactionId), builder.build())
     }
 
     fun showReminder(context: Context, plannedId: Long, title: String, body: String) {

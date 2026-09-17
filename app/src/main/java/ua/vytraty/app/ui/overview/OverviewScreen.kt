@@ -18,10 +18,14 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Rule
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -51,7 +55,11 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import ua.vytraty.app.data.db.BudgetEntity
+import ua.vytraty.app.data.db.CurrencySum
+import ua.vytraty.app.data.db.LogStatus
+import ua.vytraty.app.data.rates.ExchangeRates
 import ua.vytraty.app.data.db.PlannedPaymentEntity
 import ua.vytraty.app.data.db.TransactionRow
 import ua.vytraty.app.data.db.TxKind
@@ -59,6 +67,7 @@ import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Dates
 import ua.vytraty.app.domain.Money
 import ua.vytraty.app.domain.WalletWithBalance
+import ua.vytraty.app.domain.parser.BankSource
 import ua.vytraty.app.domain.observeWalletBalances
 import ua.vytraty.app.notifications.PaymentNotificationListener
 import ua.vytraty.app.ui.components.AppScaffold
@@ -79,16 +88,34 @@ data class BudgetProgress(val budget: BudgetEntity, val spent: Long, val categor
 
 data class OverviewState(
     val wallets: List<WalletWithBalance> = emptyList(),
-    val monthExpense: Long = 0,
-    val monthIncome: Long = 0,
+    val monthSums: List<CurrencySum> = emptyList(),
     val recent: List<TransactionRow> = emptyList(),
     val uncategorized: Int = 0,
+    val unmatched: Int = 0,
     val budgets: List<BudgetProgress> = emptyList(),
     val upcoming: List<PlannedPaymentEntity> = emptyList(),
     val mainCurrency: String = "UAH",
-)
+    val rates: Map<String, Double> = mapOf("UAH" to 1.0),
+    val ratesUpdated: Long = 0,
+) {
+    /** Sum converted into [mainCurrency]; currencies without a rate are reported instead of added. */
+    private fun convert(values: List<Pair<Long, String>>): Pair<Long, Set<String>> {
+        var total = 0L
+        val missing = mutableSetOf<String>()
+        values.forEach { (minor, currency) ->
+            val converted = ExchangeRates.convert(minor, currency, mainCurrency, rates)
+            if (converted == null) missing += currency.uppercase() else total += converted
+        }
+        return total to missing
+    }
 
-class OverviewViewModel(c: AppContainer) : ViewModel() {
+    val expense get() = convert(monthSums.map { it.expense to it.currency })
+    val income get() = convert(monthSums.map { it.income to it.currency })
+    val balance get() = convert(wallets.map { it.balanceMinor to it.wallet.currency })
+    val missingRates: Set<String> get() = expense.second + income.second + balance.second
+}
+
+class OverviewViewModel(private val c: AppContainer) : ViewModel() {
     private val db = c.db
     private val range = Dates.monthRange(YearMonth.now())
 
@@ -103,7 +130,17 @@ class OverviewViewModel(c: AppContainer) : ViewModel() {
             ) { it.toList() }
         }
 
-    private val monthSums = db.transactionDao().observeMonthSums(range.first, range.last, null).map { it.firstOrNull() }
+    private val monthSums = db.transactionDao().observeSumsByCurrency(range.first, range.last)
+    private val unmatched = db.notificationLogDao()
+        .observeCountByStatus(LogStatus.NO_WALLET, System.currentTimeMillis() - TimeUnit.DAYS.toMillis(14))
+
+    init {
+        viewModelScope.launch { c.exchangeRates.refreshIfStale() }
+    }
+
+    fun refreshRates() = viewModelScope.launch { c.exchangeRates.refreshIfStale(force = true) }
+
+    fun setCurrency(code: String) = viewModelScope.launch { c.settings.setMainCurrency(code) }
     private val upcoming = db.plannedPaymentDao().observeAll().map { list ->
         val limit = System.currentTimeMillis() + TimeUnit.DAYS.toMillis(7)
         list.filter { it.active && it.nextDueAt <= limit }
@@ -111,18 +148,21 @@ class OverviewViewModel(c: AppContainer) : ViewModel() {
 
     val state: StateFlow<OverviewState> = combine(
         observeWalletBalances(db), monthSums, db.transactionDao().observeRecent(8),
-        db.transactionDao().observeUncategorizedCount(), budgets, upcoming, c.settings.settings,
+        db.transactionDao().observeUncategorizedCount(), budgets, upcoming, c.settings.settings, unmatched,
     ) { arr ->
+        val settings = arr[6] as ua.vytraty.app.data.prefs.Settings
         @Suppress("UNCHECKED_CAST")
         OverviewState(
             wallets = arr[0] as List<WalletWithBalance>,
-            monthExpense = (arr[1] as ua.vytraty.app.data.db.MonthSum?)?.expense ?: 0L,
-            monthIncome = (arr[1] as ua.vytraty.app.data.db.MonthSum?)?.income ?: 0L,
+            monthSums = arr[1] as List<CurrencySum>,
             recent = arr[2] as List<TransactionRow>,
             uncategorized = arr[3] as Int,
+            unmatched = arr[7] as Int,
             budgets = arr[4] as List<BudgetProgress>,
             upcoming = arr[5] as List<PlannedPaymentEntity>,
-            mainCurrency = (arr[6] as ua.vytraty.app.data.prefs.Settings).mainCurrency,
+            mainCurrency = settings.mainCurrency,
+            rates = ExchangeRates.decode(settings.ratesRaw),
+            ratesUpdated = settings.ratesUpdated,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), OverviewState())
 }
@@ -134,6 +174,7 @@ fun OverviewScreen(
     onOpenWallets: () -> Unit,
     onOpenPlans: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenStore: () -> Unit,
 ) {
     val vm = appViewModel { OverviewViewModel(it) }
     val s by vm.state.collectAsStateWithLifecycle()
@@ -165,6 +206,18 @@ fun OverviewScreen(
                     }
                 }
             }
+            if (s.unmatched > 0) item {
+                Card(
+                    Modifier.fillMaxWidth().padding(16.dp, 8.dp).clickable(onClick = onOpenStore),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Rule, null)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Сповіщень без правила: ${s.unmatched}. Торкніться, щоб створити правило картки.", modifier = Modifier.weight(1f))
+                    }
+                }
+            }
             if (s.uncategorized > 0) item {
                 Card(
                     Modifier.fillMaxWidth().padding(16.dp, 8.dp).clickable(onClick = onOpenHistory),
@@ -177,20 +230,12 @@ fun OverviewScreen(
                     }
                 }
             }
-            item {
-                Card(Modifier.fillMaxWidth().padding(16.dp, 8.dp)) {
-                    Row(Modifier.fillMaxWidth()) {
-                        StatTile("Витрати за місяць", Money.format(s.monthExpense, s.mainCurrency), ExpenseRed, Modifier.weight(1f))
-                        StatTile("Доходи за місяць", Money.format(s.monthIncome, s.mainCurrency), IncomeGreen, Modifier.weight(1f))
-                    }
-                    val total = s.wallets.filter { it.wallet.currency == s.mainCurrency }.sumOf { it.balanceMinor }
-                    StatTile("Разом на гаманцях (${s.mainCurrency})", Money.format(total, s.mainCurrency), MaterialTheme.colorScheme.onSurface)
-                }
-            }
+            item { Dashboard(s, onCurrency = vm::setCurrency, onRefreshRates = vm::refreshRates) }
             item {
                 SectionHeader("Гаманці") { TextButton(onClick = onOpenWallets) { Text("Усі") } }
                 LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(s.wallets, key = { it.wallet.id }) { wb -> WalletCard(wb, onClick = onOpenWallets) }
+                    val byBank = s.wallets.sortedBy { BankSource.byCode(it.wallet.bankCode)?.displayName ?: "\uFFFF" }
+                items(byBank, key = { it.wallet.id }) { wb -> WalletCard(wb, onClick = onOpenWallets) }
                 }
             }
             if (s.budgets.isNotEmpty()) {
@@ -224,7 +269,7 @@ fun WalletCard(wb: WalletWithBalance, onClick: () -> Unit) {
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                WalletIcon(wb.wallet.type, 0xFFFFFFFF, size = 28)
+                WalletIcon(wb.wallet.type, 0xFF37474F, size = 28, bankCode = wb.wallet.bankCode)
                 Spacer(Modifier.width(8.dp))
                 Text(wb.wallet.name, color = Color.White, maxLines = 1, style = MaterialTheme.typography.labelLarge)
             }
@@ -250,5 +295,43 @@ fun BudgetRow(bp: BudgetProgress, modifier: Modifier = Modifier, onClick: (() ->
         }
         Spacer(Modifier.height(6.dp))
         LinearProgressIndicator(progress = { pct }, modifier = Modifier.fillMaxWidth(), color = color)
+    }
+}
+
+/** Month totals and wallet balances in one chosen currency, converted with PrivatBank rates. */
+@Composable
+fun Dashboard(s: OverviewState, onCurrency: (String) -> Unit, onRefreshRates: () -> Unit) {
+    Card(Modifier.fillMaxWidth().padding(16.dp, 8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(Money.currencies.filter { it == "UAH" || s.rates.containsKey(it) }) { cur ->
+                    FilterChip(
+                        selected = cur == s.mainCurrency,
+                        onClick = { onCurrency(cur) },
+                        label = { Text("${Money.symbol(cur)} $cur") },
+                    )
+                }
+            }
+            IconButton(onClick = onRefreshRates) { Icon(Icons.Filled.Refresh, "Оновити курс") }
+        }
+        Row(Modifier.fillMaxWidth()) {
+            StatTile("Витрати за місяць", Money.format(s.expense.first, s.mainCurrency), ExpenseRed, Modifier.weight(1f))
+            StatTile("Доходи за місяць", Money.format(s.income.first, s.mainCurrency), IncomeGreen, Modifier.weight(1f))
+        }
+        StatTile("Разом на гаманцях", Money.format(s.balance.first, s.mainCurrency), MaterialTheme.colorScheme.onSurface)
+        val rateLine = listOf("USD", "EUR")
+            .mapNotNull { code -> s.rates[code]?.let { "${Money.symbol(code)} " + String.format("%.2f", it) } }
+            .joinToString(" · ")
+        Text(
+            if (rateLine.isBlank()) "Курс ПриватБанку ще не завантажено" else "Курс ПриватБанку: $rateLine · ${Dates.formatDateTime(s.ratesUpdated)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = if (s.missingRates.isEmpty()) 12.dp else 0.dp),
+        )
+        if (s.missingRates.isNotEmpty()) Text(
+            "Без курсу, не враховано: ${s.missingRates.joinToString(", ")}",
+            style = MaterialTheme.typography.labelSmall, color = WarnAmber,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+        )
     }
 }
