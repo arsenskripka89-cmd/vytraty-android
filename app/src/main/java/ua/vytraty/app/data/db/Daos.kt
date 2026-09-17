@@ -74,7 +74,7 @@ interface TransactionDao {
     companion object {
         const val ROW_SELECT = """
             SELECT t.id, t.walletId, t.categoryId, t.kind, t.amountMinor, t.currency, t.timestamp,
-                   t.merchant, t.note, t.source, t.cardLast4, t.transferToWalletId,
+                   t.merchant, t.note, t.source, t.cardLast4, t.transferToWalletId, t.receivedMinor, t.receivedCurrency,
                    w.name AS walletName, w.color AS walletColor,
                    c.name AS categoryName, c.icon AS categoryIcon, c.color AS categoryColor
             FROM transactions t
@@ -145,7 +145,11 @@ interface TransactionDao {
     )
     fun observeWalletDeltas(): Flow<List<WalletBalance>>
 
-    @Query("SELECT transferToWalletId AS walletId, SUM(amountMinor) AS delta FROM transactions WHERE kind = 'TRANSFER' AND transferToWalletId IS NOT NULL GROUP BY transferToWalletId")
+    // A cross-currency transfer credits what arrived, not what was sent.
+    @Query(
+        "SELECT transferToWalletId AS walletId, SUM(COALESCE(receivedMinor, amountMinor)) AS delta FROM transactions " +
+            "WHERE kind = 'TRANSFER' AND transferToWalletId IS NOT NULL GROUP BY transferToWalletId"
+    )
     fun observeTransferIncoming(): Flow<List<WalletBalance>>
 
     @Query("SELECT SUM(amountMinor) FROM transactions WHERE kind = 'EXPENSE' AND timestamp BETWEEN :from AND :to AND (:categoryId IS NULL OR categoryId = :categoryId)")
@@ -156,13 +160,24 @@ interface TransactionDao {
 
     @Query(
         "SELECT COALESCE(SUM(CASE WHEN kind = 'INCOME' THEN amountMinor ELSE -amountMinor END), 0) " +
-            "+ COALESCE((SELECT SUM(amountMinor) FROM transactions WHERE kind = 'TRANSFER' AND transferToWalletId = :walletId), 0) " +
+            "+ COALESCE((SELECT SUM(COALESCE(receivedMinor, amountMinor)) FROM transactions WHERE kind = 'TRANSFER' AND transferToWalletId = :walletId), 0) " +
             "FROM transactions WHERE walletId = :walletId"
     )
     suspend fun sumForWallet(walletId: Long): Long
 
     @Query("SELECT * FROM transactions WHERE categoryId IS NULL AND merchant IS NOT NULL AND kind != 'TRANSFER'")
     suspend fun uncategorizedWithMerchant(): List<TransactionEntity>
+
+    /**
+     * The other half of a card-to-card transfer: the opposite direction, another wallet, also captured
+     * from a notification, still without a category, closest in time.
+     */
+    @Query(
+        "SELECT * FROM transactions WHERE id != :id AND source = 'NOTIFICATION' AND kind = :kind " +
+            "AND walletId != :walletId AND categoryId IS NULL AND timestamp BETWEEN :from AND :to " +
+            "ORDER BY ABS(timestamp - :around) LIMIT 1"
+    )
+    suspend fun counterpart(id: Long, kind: TxKind, walletId: Long, from: Long, to: Long, around: Long): TransactionEntity?
 
     @Query("UPDATE transactions SET categoryId = :categoryId WHERE id IN (:ids)")
     suspend fun setCategory(ids: List<Long>, categoryId: Long?)
@@ -251,6 +266,9 @@ interface NotificationLogDao {
 
     @Query("SELECT * FROM notification_log WHERE id = :id")
     suspend fun byId(id: Long): NotificationLogEntity?
+
+    @Query("SELECT * FROM notification_log WHERE transactionId = :transactionId")
+    suspend fun byTransactionId(transactionId: Long): List<NotificationLogEntity>
 
     @Query("SELECT COUNT(*) FROM notification_log WHERE status = :status AND postedAt > :since")
     fun observeCountByStatus(status: String, since: Long): Flow<Int>

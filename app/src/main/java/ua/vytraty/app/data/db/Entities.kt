@@ -61,6 +61,9 @@ data class TransactionEntity(
     val source: TxSource = TxSource.MANUAL,
     val cardLast4: String? = null,
     val transferToWalletId: Long? = null,
+    /** Transfers between currencies: what actually arrived. null = the same amount as was sent. */
+    val receivedMinor: Long? = null,
+    val receivedCurrency: String? = null,
     val externalId: String? = null,
     val notificationLogId: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
@@ -146,6 +149,8 @@ data class TransactionRow(
     val source: TxSource,
     val cardLast4: String?,
     val transferToWalletId: Long?,
+    val receivedMinor: Long?,
+    val receivedCurrency: String?,
     val walletName: String,
     val walletColor: Long,
     val categoryName: String?,

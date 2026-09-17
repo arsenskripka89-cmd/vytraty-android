@@ -99,6 +99,34 @@ object AppNotifications {
         NotificationManagerCompat.from(context).notify(capturedNotificationId(transactionId), builder.build())
     }
 
+    fun cancelCaptured(context: Context, transactionId: Long) {
+        NotificationManagerCompat.from(context).cancel(capturedNotificationId(transactionId))
+    }
+
+    /** Two captured notifications were joined into one transfer; one button undoes that. */
+    fun showTransferMerged(context: Context, transactionId: Long, title: String, body: String) {
+        if (!canPost(context)) return
+        val split = Intent(context, TransferActionReceiver::class.java).apply {
+            action = TransferActionReceiver.ACTION_SPLIT
+            putExtra(EXTRA_TRANSACTION_ID, transactionId)
+        }
+        val splitPi = PendingIntent.getBroadcast(
+            context, (transactionId % 100000).toInt() * 8 + 7, split,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val n = NotificationCompat.Builder(context, CHANNEL_CAPTURED)
+            .setSmallIcon(R.drawable.ic_stat_wallet)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setContentIntent(openTransactionIntent(context, transactionId))
+            .addAction(0, "Це не переказ", splitPi)
+            .addAction(0, "Перейти в програму", openTransactionIntent(context, transactionId))
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(context).notify(capturedNotificationId(transactionId), n)
+    }
+
     fun showReminder(context: Context, plannedId: Long, title: String, body: String) {
         if (!canPost(context)) return
         val open = Intent(context, MainActivity::class.java).apply {

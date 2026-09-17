@@ -29,6 +29,7 @@ class RecordParsedPaymentUseCase(
     private val settings: SettingsRepository,
     private val registry: ParserRegistry,
     private val budgetChecker: BudgetChecker,
+    private val mergeTransfers: MergeTransfersUseCase,
 ) {
     sealed class Result {
         data class Recorded(val transactionId: Long, val categoryAssigned: Boolean) : Result()
@@ -81,6 +82,8 @@ class RecordParsedPaymentUseCase(
 
         val txId = insert(parsed, wallet, res.categoryId, postedAt, logId)
         logDao.update(log.copy(id = logId, transactionId = txId))
+        // A debit and a credit of two own cards within minutes are one transfer, not two operations.
+        if (mergeTransfers.tryMerge(txId) != null) return Result.Recorded(txId, categoryAssigned = true)
         notify(txId, wallet, parsed, res.categoryId != null)
         if (parsed.kind == TxKind.EXPENSE) budgetChecker.checkAfterExpense(res.categoryId)
         return Result.Recorded(txId, res.categoryId != null)

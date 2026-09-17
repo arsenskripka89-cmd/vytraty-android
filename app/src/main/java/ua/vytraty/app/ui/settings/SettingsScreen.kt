@@ -113,6 +113,7 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
     fun setCapture(v: Boolean) = viewModelScope.launch { c.settings.setCaptureEnabled(v) }
     fun setNotifyUncategorized(v: Boolean) = viewModelScope.launch { c.settings.setNotifyUncategorized(v) }
     fun setOnlyMatchedWallet(v: Boolean) = viewModelScope.launch { c.settings.setOnlyMatchedWallet(v) }
+    fun setAutoMergeTransfers(v: Boolean) = viewModelScope.launch { c.settings.setAutoMergeTransfers(v) }
     fun setDefaultWallet(id: Long) = viewModelScope.launch { c.db.walletDao().setDefault(id) }
     fun setMainCurrency(v: String) = viewModelScope.launch { c.settings.setMainCurrency(v) }
     fun applyRules() = viewModelScope.launch { message.value = "Категорію призначено ${c.assignCategory.applyRulesToUncategorized()} операціям" }
@@ -124,10 +125,11 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
             val f = File(dir, "vytraty.csv")
             f.bufferedWriter(Charsets.UTF_8).use { w ->
                 w.write("﻿")
-                w.write("date;kind;amount;currency;wallet;category;merchant;note;source;card\n")
+                w.write("date;kind;amount;currency;received;receivedCurrency;wallet;category;merchant;note;source;card\n")
                 rows.forEach { r ->
                     val cells = listOf(
-                        Dates.formatDateTime(r.timestamp), r.kind.name, Money.minorToInput(r.amountMinor), r.currency, r.walletName,
+                        Dates.formatDateTime(r.timestamp), r.kind.name, Money.minorToInput(r.amountMinor), r.currency,
+                        r.receivedMinor?.let { Money.minorToInput(it) }.orEmpty(), r.receivedCurrency.orEmpty(), r.walletName,
                         r.categoryName.orEmpty(), r.merchant.orEmpty(), r.note.orEmpty(), r.source.name, r.cardLast4.orEmpty(),
                     )
                     w.write(cells.joinToString(";") { "\"" + it.replace("\"", "\"\"") + "\"" } + "\n")
@@ -212,6 +214,11 @@ fun SettingsScreen(onBack: () -> Unit, onLog: () -> Unit, onTester: () -> Unit, 
                 "Реклама й інші сповіщення без правила не стають витратами — вони чекають у сховищі сповіщень",
                 s.onlyMatchedWallet,
             ) { vm.setOnlyMatchedWallet(it) }
+            SwitchRow(
+                "Об'єднувати перекази між своїми картками",
+                "Списання й зарахування на різних картках протягом 15 хв стають одним переказом із двома сумами",
+                s.autoMergeTransfers,
+            ) { vm.setAutoMergeTransfers(it) }
             Column(Modifier.padding(16.dp, 8.dp)) {
                 PickerField("Гаманець за замовчуванням для сповіщень", defaultWallet?.name ?: "Не обрано", onClick = { showWallet = true })
                 Text("Використовується, коли картку у сповіщенні не розпізнано. Щоб розпізнавалась — вкажіть останні 4 цифри в гаманці.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))

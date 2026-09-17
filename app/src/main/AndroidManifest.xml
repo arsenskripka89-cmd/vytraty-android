@@ -60,6 +60,8 @@
 
         <receiver android:name=".notifications.CategoryActionReceiver" android:exported="false" />
 
+        <receiver android:name=".notifications.TransferActionReceiver" android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

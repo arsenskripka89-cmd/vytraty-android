@@ -80,6 +80,8 @@ data class TxForm(
     val timestamp: Long = System.currentTimeMillis(),
     val source: TxSource = TxSource.MANUAL,
     val cardLast4: String? = null,
+    /** Transfers between currencies: what arrived on the other card. Empty = the same as sent. */
+    val received: String = "",
     val externalId: String? = null,
     val notificationLogId: Long? = null,
     val currency: String? = null,
@@ -111,6 +113,7 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
                         amount = Money.minorToInput(kotlin.math.abs(t.amountMinor)),
                         walletId = t.walletId,
                         toWalletId = t.transferToWalletId, categoryId = t.categoryId, merchant = t.merchant.orEmpty(),
+                        received = t.receivedMinor?.let { Money.minorToInput(it) }.orEmpty(),
                         note = t.note.orEmpty(), timestamp = t.timestamp, source = t.source, cardLast4 = t.cardLast4,
                         externalId = t.externalId, notificationLogId = t.notificationLogId, currency = t.currency,
                         learnRule = !t.merchant.isNullOrBlank(), loaded = true,
@@ -138,8 +141,14 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
             val categoryId = if (f.kind == TxKind.TRANSFER) null else f.categoryId
             // Income + an expense category = a refund: stored as a negative expense of that category.
             val (kind, signedAmount) = Refunds.stored(f.kind, categoryId?.let { db.categoryDao().byId(it)?.kind }, amount)
+            val toWallet = f.toWalletId?.let { db.walletDao().byId(it) }
+            val received = if (kind == TxKind.TRANSFER) Money.parseToMinor(f.received) else null
+            if (kind == TxKind.TRANSFER && f.received.isNotBlank() && (received == null || received <= 0)) {
+                form.update { it.copy(error = "Вкажіть суму зарахування або залиште поле порожнім") }; return@launch
+            }
             val entity = TransactionEntity(
                 id = f.id, walletId = walletId, categoryId = categoryId, kind = kind, amountMinor = signedAmount,
+                receivedMinor = received, receivedCurrency = if (received != null) toWallet?.currency ?: f.currency else null,
                 currency = f.currency ?: wallet?.currency ?: "UAH", timestamp = f.timestamp,
                 merchant = f.merchant.trim().ifBlank { null }, note = f.note.trim().ifBlank { null },
                 source = f.source, cardLast4 = f.cardLast4, transferToWalletId = if (kind == TxKind.TRANSFER) f.toWalletId else null,
@@ -246,7 +255,43 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
             if (f.kind == TxKind.TRANSFER) {
                 Spacer(Modifier.height(12.dp))
                 PickerField("На гаманець", toWallet?.name ?: "Оберіть", onClick = { showToWallet = true },
-                    leading = toWallet?.let { { WalletIcon(it.type, it.color, 24) } })
+                    leading = toWallet?.let { { WalletIcon(it.type, it.color, 24, it.bankCode) } })
+                Spacer(Modifier.height(12.dp))
+                // Banks convert at their own rate and may take a fee, so what arrives is its own number.
+                Row {
+                    OutlinedTextField(
+                        value = f.received, onValueChange = { v -> vm.update { copy(received = v, error = null) } },
+                        label = { Text("Зараховано") },
+                        placeholder = { Text(f.amount.ifBlank { "стільки ж" }) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true,
+                        modifier = Modifier.weight(2f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        Money.symbol(toWallet?.currency ?: f.currency ?: "UAH"),
+                        modifier = Modifier.weight(1.2f).align(Alignment.CenterVertically),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                val sentMinor = Money.parseToMinor(f.amount)
+                val gotMinor = Money.parseToMinor(f.received)
+                val sentCurrency = f.currency ?: wallet?.currency ?: "UAH"
+                val gotCurrency = toWallet?.currency ?: sentCurrency
+                if (sentMinor != null && gotMinor != null && sentMinor > 0 && gotMinor > 0) {
+                    val hint = if (!sentCurrency.equals(gotCurrency, true)) {
+                        val rate = java.math.BigDecimal(sentMinor)
+                            .divide(java.math.BigDecimal(gotMinor), 4, java.math.RoundingMode.HALF_UP)
+                        "Курс банку: 1 ${Money.symbol(gotCurrency)} = ${rate.toPlainString().replace('.', ',')} ${Money.symbol(sentCurrency)}"
+                    } else if (sentMinor > gotMinor) {
+                        "Комісія: ${Money.format(sentMinor - gotMinor, sentCurrency)}"
+                    } else {
+                        null
+                    }
+                    hint?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 16.dp, top = 4.dp))
+                    }
+                }
             } else {
                 Spacer(Modifier.height(12.dp))
                 PickerField(

@@ -7,6 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import ua.vytraty.app.data.db.CaptureRuleEntity
 import ua.vytraty.app.data.db.RuleType
+import ua.vytraty.app.data.db.TransactionEntity
+import ua.vytraty.app.data.db.TxKind
+import ua.vytraty.app.data.db.TxSource
+import ua.vytraty.app.domain.usecase.MergeTransfersUseCase
 import ua.vytraty.app.data.rates.ExchangeRates
 import ua.vytraty.app.domain.parser.AmountExtractor
 import ua.vytraty.app.domain.parser.BankSource
@@ -99,5 +103,42 @@ class RulesTest {
         assertEquals(BankSource.PRIVATBANK, BankSource.byCode("PRIVATBANK"))
         assertNull(BankSource.byCode(null))
         assertNull(BankSource.byCode("whatever"))
+    }
+}
+
+class TransferMergeTest {
+    private fun tx(
+        kind: TxKind,
+        amount: Long,
+        currency: String = "UAH",
+        source: TxSource = TxSource.NOTIFICATION,
+        categoryId: Long? = null,
+        received: Long? = null,
+        receivedCurrency: String? = null,
+    ) = TransactionEntity(
+        id = 1, walletId = 1, categoryId = categoryId, kind = kind, amountMinor = amount, currency = currency,
+        timestamp = 0, source = source, receivedMinor = received, receivedCurrency = receivedCurrency,
+    )
+
+    @Test
+    fun `only an uncategorized captured payment can be half of a transfer`() {
+        assertTrue(MergeTransfersUseCase.isMergeable(tx(TxKind.EXPENSE, 2_600_000)))
+        assertTrue(MergeTransfersUseCase.isMergeable(tx(TxKind.INCOME, 50_153, "EUR")))
+        // a payment the rules already classified is a normal expense, not a transfer
+        assertFalse(MergeTransfersUseCase.isMergeable(tx(TxKind.EXPENSE, 2_600_000, categoryId = 5)))
+        // typed by hand
+        assertFalse(MergeTransfersUseCase.isMergeable(tx(TxKind.EXPENSE, 2_600_000, source = TxSource.MANUAL)))
+        // a refund
+        assertFalse(MergeTransfersUseCase.isMergeable(tx(TxKind.EXPENSE, -88_700)))
+    }
+
+    @Test
+    fun `the rate the bank used is derived from both amounts`() {
+        // 26 000,00 ₴ left, 501,53 € arrived
+        val transfer = tx(TxKind.TRANSFER, 2_600_000, "UAH", received = 50_153, receivedCurrency = "EUR")
+        assertEquals("Курс: 1 € = 51,8414 ₴", MergeTransfersUseCase.rateLine(transfer))
+        // same currency on both sides — nothing to show
+        assertNull(MergeTransfersUseCase.rateLine(tx(TxKind.TRANSFER, 100_000, "UAH", received = 99_000, receivedCurrency = "UAH")))
+        assertNull(MergeTransfersUseCase.rateLine(tx(TxKind.TRANSFER, 100_000, "UAH")))
     }
 }

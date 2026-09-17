@@ -90,3 +90,25 @@ class CategoryActionReceiver : BroadcastReceiver() {
         const val ACTION_ASSIGN = "ua.vytraty.app.action.ASSIGN_CATEGORY"
     }
 }
+
+/** "Це не переказ": splits an automatically merged transfer back into two operations. */
+class TransferActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != ACTION_SPLIT) return
+        val txId = intent.getLongExtra(AppNotifications.EXTRA_TRANSACTION_ID, -1L)
+        if (txId <= 0) return
+        val app = context.applicationContext as VytratyApp
+        val pending = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                app.container.mergeTransfers.split(txId)
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    companion object {
+        const val ACTION_SPLIT = "ua.vytraty.app.action.SPLIT_TRANSFER"
+    }
+}

@@ -21,6 +21,8 @@ data class Settings(
     val notifyUncategorized: Boolean = true,
     /** record a captured payment only when a rule (or a card number) points it to a wallet */
     val onlyMatchedWallet: Boolean = true,
+    /** join a captured debit and credit of two own cards into one transfer */
+    val autoMergeTransfers: Boolean = true,
     val monobankToken: String = "",
     val monobankLastSync: Long = 0,
     val monobankAutoSync: Boolean = true,
@@ -37,6 +39,7 @@ class SettingsRepository(private val context: Context) {
         val enabledPackages = stringSetPreferencesKey("enabled_packages")
         val notifyUncategorized = booleanPreferencesKey("notify_uncategorized")
         val onlyMatchedWallet = booleanPreferencesKey("only_matched_wallet")
+        val autoMergeTransfers = booleanPreferencesKey("auto_merge_transfers")
         val ratesRaw = stringPreferencesKey("rates_raw")
         val ratesUpdated = longPreferencesKey("rates_updated")
         val monobankToken = stringPreferencesKey("monobank_token")
@@ -52,6 +55,7 @@ class SettingsRepository(private val context: Context) {
             enabledPackages = p[Keys.enabledPackages] ?: emptySet(),
             notifyUncategorized = p[Keys.notifyUncategorized] ?: true,
             onlyMatchedWallet = p[Keys.onlyMatchedWallet] ?: true,
+            autoMergeTransfers = p[Keys.autoMergeTransfers] ?: true,
             ratesRaw = p[Keys.ratesRaw] ?: "",
             ratesUpdated = p[Keys.ratesUpdated] ?: 0L,
             monobankToken = p[Keys.monobankToken] ?: "",
@@ -72,6 +76,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setMonobankAutoSync(v: Boolean) = context.dataStore.edit { it[Keys.monobankAutoSync] = v }
     suspend fun setMainCurrency(v: String) = context.dataStore.edit { it[Keys.mainCurrency] = v }
     suspend fun setOnlyMatchedWallet(v: Boolean) = context.dataStore.edit { it[Keys.onlyMatchedWallet] = v }
+    suspend fun setAutoMergeTransfers(v: Boolean) = context.dataStore.edit { it[Keys.autoMergeTransfers] = v }
     suspend fun setRates(raw: String, updated: Long) = context.dataStore.edit {
         it[Keys.ratesRaw] = raw
         it[Keys.ratesUpdated] = updated

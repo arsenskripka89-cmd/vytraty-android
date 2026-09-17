@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WalletEntity::class, CategoryEntity::class, TransactionEntity::class, MerchantRuleEntity::class,
         PlannedPaymentEntity::class, BudgetEntity::class, NotificationLogEntity::class, CaptureRuleEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -45,9 +45,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Transfers between currencies: how much arrived, next to how much was sent. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `transactions` ADD COLUMN `receivedMinor` INTEGER")
+                db.execSQL("ALTER TABLE `transactions` ADD COLUMN `receivedCurrency` TEXT")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "vytraty.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

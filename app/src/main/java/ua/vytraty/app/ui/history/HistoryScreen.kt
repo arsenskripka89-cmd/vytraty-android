@@ -201,6 +201,7 @@ fun TransactionRowItem(row: TransactionRow, onClick: () -> Unit) {
                 Text(
                     listOfNotNull(
                         "Повернення".takeIf { Refunds.isRefund(row.kind, row.amountMinor) },
+                        row.receivedMinor?.let { "→ ${Money.format(it, row.receivedCurrency ?: row.currency)}" },
                         if (needsCategory) "Без категорії" else row.categoryName.takeIf { row.merchant != null && row.kind != TxKind.TRANSFER },
                         row.walletName,
                         row.cardLast4?.let { "•••• $it" },
