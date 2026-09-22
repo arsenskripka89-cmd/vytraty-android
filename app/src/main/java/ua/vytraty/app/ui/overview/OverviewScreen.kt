@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -51,6 +52,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -132,8 +134,18 @@ class OverviewViewModel(private val c: AppContainer) : ViewModel() {
         }
 
     private val monthSums = db.transactionDao().observeSumsByCurrency(range.first, range.last)
-    private val unmatched = db.notificationLogDao()
-        .observeCountByStatus(LogStatus.NO_WALLET, System.currentTimeMillis() - TimeUnit.DAYS.toMillis(14))
+    // The reminders count only what arrived since the user last opened them: looking and doing nothing
+    // means "leave these as they are".
+    private val unmatched = c.settings.settings.map { it.unmatchedSeenAt }.distinctUntilChanged().flatMapLatest { seen ->
+        val since = maxOf(seen, System.currentTimeMillis() - TimeUnit.DAYS.toMillis(14))
+        db.notificationLogDao().observeCountByStatus(LogStatus.NO_WALLET, since)
+    }
+    private val uncategorized = c.settings.settings.map { it.uncategorizedSeenAt }.distinctUntilChanged().flatMapLatest { seen ->
+        db.transactionDao().observeUncategorizedCountSince(seen)
+    }
+
+    fun markUnmatchedSeen() = viewModelScope.launch { c.settings.markUnmatchedSeen() }
+    fun markUncategorizedSeen() = viewModelScope.launch { c.settings.markUncategorizedSeen() }
 
     init {
         viewModelScope.launch { c.exchangeRates.refreshIfStale() }
@@ -149,7 +161,7 @@ class OverviewViewModel(private val c: AppContainer) : ViewModel() {
 
     val state: StateFlow<OverviewState> = combine(
         observeWalletBalances(db), monthSums, db.transactionDao().observeRecent(8),
-        db.transactionDao().observeUncategorizedCount(), budgets, upcoming, c.settings.settings, unmatched,
+        uncategorized, budgets, upcoming, c.settings.settings, unmatched,
     ) { arr ->
         val settings = arr[6] as ua.vytraty.app.data.prefs.Settings
         @Suppress("UNCHECKED_CAST")
@@ -173,6 +185,7 @@ fun OverviewScreen(
     onOpenTransaction: (Long) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenWallets: () -> Unit,
+    onOpenWallet: (Long) -> Unit,
     onOpenPlans: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenStore: () -> Unit,
@@ -209,7 +222,7 @@ fun OverviewScreen(
             }
             if (s.unmatched > 0) item {
                 Card(
-                    Modifier.fillMaxWidth().padding(16.dp, 8.dp).clickable(onClick = onOpenStore),
+                    Modifier.fillMaxWidth().padding(16.dp, 8.dp).clickable { vm.markUnmatchedSeen(); onOpenStore() },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                 ) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -221,7 +234,7 @@ fun OverviewScreen(
             }
             if (s.uncategorized > 0) item {
                 Card(
-                    Modifier.fillMaxWidth().padding(16.dp, 8.dp).clickable(onClick = onOpenHistory),
+                    Modifier.fillMaxWidth().padding(16.dp, 8.dp).clickable { vm.markUncategorizedSeen(); onOpenHistory() },
                     colors = CardDefaults.cardColors(containerColor = WarnAmber.copy(alpha = 0.18f)),
                 ) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -236,7 +249,7 @@ fun OverviewScreen(
                 SectionHeader("Гаманці") { TextButton(onClick = onOpenWallets) { Text("Усі") } }
                 LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val byBank = s.wallets.sortedBy { it.wallet.bankOrGuess()?.displayName ?: "\uFFFF" }
-                items(byBank, key = { it.wallet.id }) { wb -> WalletCard(wb, onClick = onOpenWallets) }
+                    items(byBank, key = { it.wallet.id }) { wb -> WalletCard(wb, onClick = { onOpenWallet(wb.wallet.id) }) }
                 }
             }
             if (s.budgets.isNotEmpty()) {
@@ -262,21 +275,31 @@ fun OverviewScreen(
     }
 }
 
+/** One size for every wallet: the card-number line keeps its place even when there is no number. */
 @Composable
 fun WalletCard(wb: WalletWithBalance, onClick: () -> Unit) {
     Card(
-        Modifier.width(180.dp).clickable(onClick = onClick),
+        Modifier.width(180.dp).height(112.dp).clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = wb.wallet.color.toColor()),
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WalletIcon(wb.wallet, size = 28)
                 Spacer(Modifier.width(8.dp))
-                Text(wb.wallet.name, color = Color.White, maxLines = 1, style = MaterialTheme.typography.labelLarge)
+                Text(
+                    wb.wallet.name, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelLarge,
+                )
             }
             Spacer(Modifier.height(10.dp))
-            Text(Money.format(wb.balanceMinor, wb.wallet.currency), color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-            wb.wallet.cardLast4?.let { Text("•••• $it", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodySmall) }
+            Text(
+                Money.format(wb.balanceMinor, wb.wallet.currency), color = Color.White, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                wb.wallet.cardLast4?.let { "•••• $it" } ?: "",
+                color = Color.White.copy(alpha = 0.8f), maxLines = 1, style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

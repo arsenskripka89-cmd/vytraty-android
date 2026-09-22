@@ -116,6 +116,10 @@ interface TransactionDao {
     @Query("SELECT COUNT(*) FROM transactions WHERE categoryId IS NULL AND kind != 'TRANSFER'")
     fun observeUncategorizedCount(): Flow<Int>
 
+    /** Uncategorized operations added after [since] (the overview reminder counts only new ones). */
+    @Query("SELECT COUNT(*) FROM transactions WHERE categoryId IS NULL AND kind != 'TRANSFER' AND createdAt > :since")
+    fun observeUncategorizedCountSince(since: Long): Flow<Int>
+
     @Query("SELECT categoryId, SUM(amountMinor) AS total FROM transactions WHERE kind = :kind AND timestamp BETWEEN :from AND :to AND (:walletId IS NULL OR walletId = :walletId) GROUP BY categoryId ORDER BY total DESC")
     fun observeSumsByCategory(kind: TxKind, from: Long, to: Long, walletId: Long?): Flow<List<CategorySum>>
 
@@ -285,7 +289,7 @@ interface NotificationLogDao {
     @Query("SELECT COUNT(*) FROM notification_log WHERE parsed = 0")
     fun observeUnparsedCount(): Flow<Int>
 
-    @Query("SELECT * FROM notification_log WHERE packageName = :pkg AND text = :text AND postedAt > :since LIMIT 1")
+    @Query("SELECT * FROM notification_log WHERE packageName = :pkg AND (text = :text OR (text IS NULL AND :text IS NULL)) AND postedAt > :since LIMIT 1")
     suspend fun findDuplicate(pkg: String, text: String?, since: Long): NotificationLogEntity?
 
     @Insert suspend fun insert(n: NotificationLogEntity): Long
