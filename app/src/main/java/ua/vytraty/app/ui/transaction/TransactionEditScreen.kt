@@ -56,6 +56,7 @@ import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Money
 import ua.vytraty.app.domain.Refunds
+import ua.vytraty.app.domain.parser.BankSource
 import ua.vytraty.app.domain.usecase.MergeTransfersUseCase
 import ua.vytraty.app.ui.components.AppScaffold
 import ua.vytraty.app.ui.components.CategoryBadge
@@ -87,6 +88,8 @@ data class TxForm(
     val recordFee: Boolean = true,
     val externalId: String? = null,
     val notificationLogId: Long? = null,
+    /** Apps whose notifications announced this payment; two when the bank and Google Wallet were grouped. */
+    val sources: List<String> = emptyList(),
     val currency: String? = null,
     val learnRule: Boolean = true,
     val loaded: Boolean = false,
@@ -122,6 +125,8 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
                         note = t.note.orEmpty(), timestamp = t.timestamp, source = t.source, cardLast4 = t.cardLast4,
                         externalId = t.externalId, notificationLogId = t.notificationLogId, currency = t.currency,
                         learnRule = !t.merchant.isNullOrBlank(), loaded = true,
+                        sources = db.notificationLogDao().byTransactionId(t.id).sortedBy { it.postedAt }
+                            .map { BankSource.byPackage(it.packageName)?.displayName ?: it.packageName }.distinct(),
                     )
                 }
             } else {
@@ -235,6 +240,7 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
                             )
                             val details = listOfNotNull(wallet?.name, f.cardLast4?.let { "картка •••• $it" }).joinToString(" · ")
                             if (details.isNotBlank()) Text(details, style = MaterialTheme.typography.bodySmall)
+                            if (f.sources.size > 1) Text("Об'єднано сповіщення: ${f.sources.joinToString(" + ")}", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }

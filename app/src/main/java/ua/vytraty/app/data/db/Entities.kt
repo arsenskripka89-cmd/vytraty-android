@@ -195,14 +195,17 @@ object LogStatus {
     const val NO_WALLET = "NO_WALLET"
     /** not a payment: no amount in the text */
     const val NO_AMOUNT = "NO_AMOUNT"
+    /** the same payment already came from another app (bank + Google Wallet); joined to that transaction */
+    const val GROUPED = "GROUPED"
 
-    val all = listOf(RECORDED, NO_CATEGORY, NO_WALLET, NO_AMOUNT)
+    val all = listOf(RECORDED, NO_CATEGORY, NO_WALLET, GROUPED, NO_AMOUNT)
 
     fun label(status: String?) = when (status) {
         RECORDED -> "Пройшло правила"
         NO_CATEGORY -> "Картка є, без категорії"
         NO_WALLET -> "Не пройшло правило картки"
         NO_AMOUNT -> "Не платіж"
+        GROUPED -> "Дубль іншого сповіщення — об'єднано"
         else -> "Невідомо"
     }
 }

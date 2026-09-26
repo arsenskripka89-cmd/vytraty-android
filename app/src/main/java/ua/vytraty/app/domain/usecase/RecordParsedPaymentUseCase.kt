@@ -1,6 +1,8 @@
 package ua.vytraty.app.domain.usecase
 
 import android.content.Context
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import ua.vytraty.app.data.db.AppDatabase
 import ua.vytraty.app.data.db.LogStatus
 import ua.vytraty.app.data.db.NotificationLogEntity
@@ -10,6 +12,7 @@ import ua.vytraty.app.data.db.TxKind
 import ua.vytraty.app.data.db.TxSource
 import ua.vytraty.app.data.db.WalletEntity
 import ua.vytraty.app.data.prefs.SettingsRepository
+import ua.vytraty.app.domain.DuplicatePayments
 import ua.vytraty.app.domain.MerchantNormalizer
 import ua.vytraty.app.domain.Money
 import ua.vytraty.app.domain.parser.BankSource
@@ -34,6 +37,8 @@ class RecordParsedPaymentUseCase(
 ) {
     sealed class Result {
         data class Recorded(val transactionId: Long, val categoryAssigned: Boolean) : Result()
+        /** The same payment was already written from another app's notification; this one joined it. */
+        data class Grouped(val transactionId: Long, val logId: Long) : Result()
         data object Duplicate : Result()
         data class NotParsed(val logId: Long) : Result()
         /** Payment, but no wallet rule matched it: logged for the store, nothing written. */
@@ -44,7 +49,11 @@ class RecordParsedPaymentUseCase(
     /** What the rules made of one notification. */
     data class Resolution(val wallet: WalletEntity?, val categoryId: Long?, val byWalletRule: Boolean)
 
-    suspend fun handle(packageName: String, title: String?, text: String?, postedAt: Long): Result {
+    // The bank and Google Wallet often post within the same second; one at a time, so the second sees the first.
+    suspend fun handle(packageName: String, title: String?, text: String?, postedAt: Long): Result =
+        lock.withLock { handleLocked(packageName, title, text, postedAt) }
+
+    private suspend fun handleLocked(packageName: String, title: String?, text: String?, postedAt: Long): Result {
         val s = settings.current()
         if (!s.captureEnabled) return Result.Disabled
         if (s.enabledPackages.isNotEmpty() && packageName !in s.enabledPackages) return Result.Disabled
@@ -69,6 +78,7 @@ class RecordParsedPaymentUseCase(
         }
 
         val res = resolve(packageName, title, text, parsed)
+        if (s.groupDuplicates) groupWithTwin(packageName, title, text, parsed, res, postedAt)?.let { return it }
         val wallet = res.wallet ?: if (s.onlyMatchedWallet) null else (db.walletDao().defaultWallet() ?: db.walletDao().firstActive())
         val status = when {
             !res.byWalletRule -> LogStatus.NO_WALLET
@@ -91,6 +101,58 @@ class RecordParsedPaymentUseCase(
         if (parsed.kind == TxKind.EXPENSE) budgetChecker.checkAfterExpense(res.categoryId)
         return Result.Recorded(txId, res.categoryId != null)
     }
+
+    /**
+     * The bank and Google Wallet both announce one card payment. When a transaction with the same amount
+     * was already written from another app's notification a moment ago, this notification is filed under
+     * it and only fills in what it lacked — no second expense appears.
+     */
+    private suspend fun groupWithTwin(
+        packageName: String, title: String?, text: String?, parsed: ParsedPayment, res: Resolution, postedAt: Long,
+        /** A stored notification being reprocessed: it is refiled instead of a new row being written. */
+        storedLog: NotificationLogEntity? = null,
+    ): Result? {
+        val capture = DuplicatePayments.Capture(
+            packageName = packageName,
+            kind = parsed.kind,
+            amountMinor = parsed.amountMinor,
+            currency = parsed.currency,
+            timestamp = postedAt,
+            ruleWalletId = res.wallet?.takeIf { res.byWalletRule }?.id,
+            merchant = MerchantNormalizer.display(parsed.merchant).ifBlank { null },
+            categoryId = res.categoryId,
+            cardLast4 = parsed.cardLast4,
+        )
+        val logDao = db.notificationLogDao()
+        val candidates = db.transactionDao().sameAmount(
+            kind = parsed.kind, amountMinor = parsed.amountMinor, currency = parsed.currency,
+            from = postedAt - DuplicatePayments.WINDOW_MS, to = postedAt + DuplicatePayments.WINDOW_MS, around = postedAt,
+        )
+        for (tx in candidates) {
+            val logs = logDao.byTransactionId(tx.id)
+            val byRule = logs.any { it.status == LogStatus.RECORDED || it.status == LogStatus.NO_CATEGORY }
+            if (!DuplicatePayments.isSamePayment(tx, logs.map { it.packageName }, byRule, capture)) continue
+
+            val merged = DuplicatePayments.merged(tx, byRule, capture)
+            if (merged != tx) db.transactionDao().update(merged)
+            val first = logs.minByOrNull { it.postedAt }
+            val grouped = (storedLog ?: NotificationLogEntity(packageName = packageName, title = title, text = text, postedAt = postedAt, parsed = true))
+                .copy(
+                    parsed = true, status = LogStatus.GROUPED, transactionId = tx.id,
+                    reason = "Та сама оплата вже прийшла від ${first?.let { sourceName(it.packageName) } ?: "іншого застосунку"}",
+                )
+            val logId = if (storedLog != null) grouped.id.also { logDao.update(grouped) } else logDao.insert(grouped)
+            if (tx.categoryId == null && merged.categoryId != null) {
+                // The category came with the second notification: the "choose a category" prompt is answered.
+                AppNotifications.cancelCaptured(context, tx.id)
+                if (merged.kind == TxKind.EXPENSE) budgetChecker.checkAfterExpense(merged.categoryId)
+            }
+            return Result.Grouped(tx.id, logId)
+        }
+        return null
+    }
+
+    private fun sourceName(packageName: String) = BankSource.byPackage(packageName)?.displayName ?: packageName
 
     /**
      * Wallet: a capture rule first, then the last 4 digits of a card, then the default wallet.
@@ -157,15 +219,23 @@ class RecordParsedPaymentUseCase(
         val res = resolve(log.packageName, log.title, log.text, parsed)
         val wallet = res.wallet ?: return false
         val existing = log.transactionId?.let { db.transactionDao().byId(it) }
-        val status = if (res.categoryId == null) LogStatus.NO_CATEGORY else LogStatus.RECORDED
+        val status = when {
+            existing != null && log.status == LogStatus.GROUPED -> LogStatus.GROUPED
+            res.categoryId == null -> LogStatus.NO_CATEGORY
+            else -> LogStatus.RECORDED
+        }
         if (existing == null) {
+            // Its twin from the other app may have been written meanwhile; then this one only joins it.
+            if (settings.current().groupDuplicates &&
+                groupWithTwin(log.packageName, log.title, log.text, parsed, res, log.postedAt, storedLog = log) != null
+            ) return true
             val txId = insert(parsed, wallet, res.categoryId, log.postedAt, logId)
             db.notificationLogDao().update(log.copy(transactionId = txId, parsed = true, status = status, reason = null))
         } else {
             db.transactionDao().update(
                 existing.copy(walletId = wallet.id, categoryId = res.categoryId ?: existing.categoryId),
             )
-            db.notificationLogDao().update(log.copy(status = status, reason = null))
+            db.notificationLogDao().update(log.copy(status = status, reason = log.reason.takeIf { status == LogStatus.GROUPED }))
         }
         return true
     }
@@ -193,6 +263,7 @@ class RecordParsedPaymentUseCase(
 
     companion object {
         const val DUPLICATE_WINDOW_MS = 90_000L
+        private val lock = Mutex()
         val RETENTION_MS: Long = TimeUnit.DAYS.toMillis(60)
     }
 }

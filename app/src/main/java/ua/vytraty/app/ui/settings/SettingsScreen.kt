@@ -114,6 +114,7 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
     fun setNotifyUncategorized(v: Boolean) = viewModelScope.launch { c.settings.setNotifyUncategorized(v) }
     fun setOnlyMatchedWallet(v: Boolean) = viewModelScope.launch { c.settings.setOnlyMatchedWallet(v) }
     fun setAutoMergeTransfers(v: Boolean) = viewModelScope.launch { c.settings.setAutoMergeTransfers(v) }
+    fun setGroupDuplicates(v: Boolean) = viewModelScope.launch { c.settings.setGroupDuplicates(v) }
     fun setDefaultWallet(id: Long) = viewModelScope.launch { c.db.walletDao().setDefault(id) }
     fun setMainCurrency(v: String) = viewModelScope.launch { c.settings.setMainCurrency(v) }
     fun applyRules() = viewModelScope.launch { message.value = "Категорію призначено ${c.assignCategory.applyRulesToUncategorized()} операціям" }
@@ -219,6 +220,11 @@ fun SettingsScreen(onBack: () -> Unit, onLog: () -> Unit, onTester: () -> Unit, 
                 "Списання й зарахування на різних картках протягом 15 хв стають одним переказом із двома сумами",
                 s.autoMergeTransfers,
             ) { vm.setAutoMergeTransfers(it) }
+            SwitchRow(
+                "Групувати дублі сповіщень",
+                "Та сама сума від банку й Google Wallet протягом 5 хв — одна операція, дані з обох сповіщень",
+                s.groupDuplicates,
+            ) { vm.setGroupDuplicates(it) }
             Column(Modifier.padding(16.dp, 8.dp)) {
                 PickerField("Гаманець за замовчуванням для сповіщень", defaultWallet?.name ?: "Не обрано", onClick = { showWallet = true })
                 Text("Використовується, коли картку у сповіщенні не розпізнано. Щоб розпізнавалась — вкажіть останні 4 цифри в гаманці.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))

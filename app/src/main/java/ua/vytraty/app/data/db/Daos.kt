@@ -185,6 +185,14 @@ interface TransactionDao {
     )
     suspend fun counterpart(id: Long, kind: TxKind, walletId: Long, from: Long, to: Long, around: Long): TransactionEntity?
 
+    /** Payments captured from notifications with this amount around [around]; candidates for one payment announced twice. */
+    @Query(
+        "SELECT * FROM transactions WHERE source = 'NOTIFICATION' AND kind = :kind AND amountMinor = :amountMinor " +
+            "AND currency = :currency COLLATE NOCASE AND timestamp BETWEEN :from AND :to " +
+            "ORDER BY ABS(timestamp - :around) LIMIT 5"
+    )
+    suspend fun sameAmount(kind: TxKind, amountMinor: Long, currency: String, from: Long, to: Long, around: Long): List<TransactionEntity>
+
     @Query("UPDATE transactions SET categoryId = :categoryId WHERE id IN (:ids)")
     suspend fun setCategory(ids: List<Long>, categoryId: Long?)
 

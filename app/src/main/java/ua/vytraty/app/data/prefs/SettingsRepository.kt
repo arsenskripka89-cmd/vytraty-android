@@ -23,6 +23,8 @@ data class Settings(
     val onlyMatchedWallet: Boolean = true,
     /** join a captured debit and credit of two own cards into one transfer */
     val autoMergeTransfers: Boolean = true,
+    /** one payment announced by the bank and by Google Wallet is written once */
+    val groupDuplicates: Boolean = true,
     val monobankToken: String = "",
     val monobankLastSync: Long = 0,
     val monobankAutoSync: Boolean = true,
@@ -40,6 +42,7 @@ class SettingsRepository(private val context: Context) {
         val notifyUncategorized = booleanPreferencesKey("notify_uncategorized")
         val onlyMatchedWallet = booleanPreferencesKey("only_matched_wallet")
         val autoMergeTransfers = booleanPreferencesKey("auto_merge_transfers")
+        val groupDuplicates = booleanPreferencesKey("group_duplicates")
         val ratesRaw = stringPreferencesKey("rates_raw")
         val ratesUpdated = longPreferencesKey("rates_updated")
         val monobankToken = stringPreferencesKey("monobank_token")
@@ -56,6 +59,7 @@ class SettingsRepository(private val context: Context) {
             notifyUncategorized = p[Keys.notifyUncategorized] ?: true,
             onlyMatchedWallet = p[Keys.onlyMatchedWallet] ?: true,
             autoMergeTransfers = p[Keys.autoMergeTransfers] ?: true,
+            groupDuplicates = p[Keys.groupDuplicates] ?: true,
             ratesRaw = p[Keys.ratesRaw] ?: "",
             ratesUpdated = p[Keys.ratesUpdated] ?: 0L,
             monobankToken = p[Keys.monobankToken] ?: "",
@@ -77,6 +81,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setMainCurrency(v: String) = context.dataStore.edit { it[Keys.mainCurrency] = v }
     suspend fun setOnlyMatchedWallet(v: Boolean) = context.dataStore.edit { it[Keys.onlyMatchedWallet] = v }
     suspend fun setAutoMergeTransfers(v: Boolean) = context.dataStore.edit { it[Keys.autoMergeTransfers] = v }
+    suspend fun setGroupDuplicates(v: Boolean) = context.dataStore.edit { it[Keys.groupDuplicates] = v }
     suspend fun setRates(raw: String, updated: Long) = context.dataStore.edit {
         it[Keys.ratesRaw] = raw
         it[Keys.ratesUpdated] = updated
