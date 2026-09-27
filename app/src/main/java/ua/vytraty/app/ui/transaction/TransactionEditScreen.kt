@@ -101,7 +101,12 @@ sealed class TxEvent {
     data class AskApplyToOthers(val ids: List<Long>, val categoryId: Long, val merchant: String) : TxEvent()
 }
 
-class TransactionEditViewModel(private val c: AppContainer, private val id: Long, initialKind: String) : ViewModel() {
+class TransactionEditViewModel(
+    private val c: AppContainer,
+    private val id: Long,
+    initialKind: String,
+    private val initialWalletId: Long = 0,
+) : ViewModel() {
     private val db = c.db
     val form = MutableStateFlow(TxForm(kind = runCatching { TxKind.valueOf(initialKind) }.getOrDefault(TxKind.EXPENSE)))
     val wallets = db.walletDao().observeActive().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -130,7 +135,9 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
                     )
                 }
             } else {
-                val w = db.walletDao().defaultWallet() ?: db.walletDao().firstActive()
+                // Opened from a wallet card: that wallet is the one being paid from.
+                val w = initialWalletId.takeIf { it > 0 }?.let { db.walletDao().byId(it) }?.takeIf { !it.archived }
+                    ?: db.walletDao().defaultWallet() ?: db.walletDao().firstActive()
                 form.update { it.copy(walletId = w?.id, currency = w?.currency, loaded = true) }
             }
         }
@@ -205,8 +212,14 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
 }
 
 @Composable
-fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onNewCategory: (String) -> Unit) {
-    val vm = appViewModel(key = "tx$id") { TransactionEditViewModel(it, id, initialKind) }
+fun TransactionEditScreen(
+    id: Long,
+    initialKind: String,
+    onBack: () -> Unit,
+    onNewCategory: (String) -> Unit,
+    walletId: Long = 0,
+) {
+    val vm = appViewModel(key = "tx$id-$walletId") { TransactionEditViewModel(it, id, initialKind, walletId) }
     val f by vm.form.collectAsStateWithLifecycle()
     val wallets by vm.wallets.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
@@ -274,7 +287,7 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
             PickerField(
                 if (f.kind == TxKind.TRANSFER) "З гаманця" else "Гаманець", wallet?.name ?: "Оберіть",
                 onClick = { showWallet = true },
-                leading = wallet?.let { { WalletIcon(it.type, it.color, 24) } },
+                leading = wallet?.let { { WalletIcon(it, 24) } },
             )
             if (f.kind == TxKind.TRANSFER) {
                 Spacer(Modifier.height(12.dp))

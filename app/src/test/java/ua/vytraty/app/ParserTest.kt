@@ -25,6 +25,15 @@ class ParserTest {
     }
 
     @Test
+    fun `google wallet merchant title, amount and card name in text`() {
+        val p = registry.parse("com.google.android.apps.walletnfcrel", "MERCADONA MERCAT CENTRAL", "10,48 € с карты Raif EUR")!!
+        assertEquals(1048L, p.amountMinor)
+        assertEquals("EUR", p.currency)
+        assertEquals(TxKind.EXPENSE, p.kind)
+        assertEquals("MERCADONA MERCAT CENTRAL", p.merchant)
+    }
+
+    @Test
     fun `google pay title with amount and card, text with merchant`() {
         val p = registry.parseAs(BankSource.GOOGLE_PAY, "₴250,00 з Visa •••• 1234", "Сільпо")!!
         assertEquals(25000L, p.amountMinor)

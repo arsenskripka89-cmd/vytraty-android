@@ -64,7 +64,7 @@ object Routes {
     const val PARSER_TESTER = "parser_tester"
     const val RULES = "rules"
 
-    fun tx(id: Long = 0, kind: String = "EXPENSE") = "tx/$id?kind=$kind"
+    fun tx(id: Long = 0, kind: String = "EXPENSE", walletId: Long = 0) = "tx/$id?kind=$kind&walletId=$walletId"
     fun wallet(id: Long = 0) = "wallet/$id"
     fun rule(id: Long = 0, logId: Long = 0, walletId: Long = 0) = "rule/$id?logId=$logId&walletId=$walletId"
     fun category(id: Long = 0, kind: String = "EXPENSE") = "category/$id?kind=$kind"
@@ -80,6 +80,25 @@ sealed class PendingNav {
 }
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
+
+/**
+ * Switches bottom tabs. Огляд is the start destination: going back to it just pops everything above
+ * it — saving and restoring its state would bring back the screen that was on top (Історія opened
+ * from a link on Огляд came back instead of Огляд).
+ */
+private fun NavHostController.navigateToTab(route: String) {
+    if (route == Routes.OVERVIEW) {
+        if (!popBackStack(Routes.OVERVIEW, inclusive = false)) {
+            navigate(Routes.OVERVIEW) { popUpTo(graph.findStartDestination().id) { inclusive = true }; launchSingleTop = true }
+        }
+        return
+    }
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
 
 private val tabs = listOf(
     Tab(Routes.OVERVIEW, "Огляд", Icons.Filled.Dashboard),
@@ -100,7 +119,7 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
     LaunchedEffect(pending) {
         when (val p = pending) {
             is PendingNav.Transaction -> { nav.navigate(Routes.tx(p.id)); onPendingConsumed() }
-            is PendingNav.Planned -> { nav.navigate(Routes.PLANS); onPendingConsumed() }
+            is PendingNav.Planned -> { nav.navigateToTab(Routes.PLANS); onPendingConsumed() }
             is PendingNav.Updates -> { nav.navigate(Routes.SETTINGS); onPendingConsumed() }
             null -> Unit
         }
@@ -112,13 +131,7 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
                 tabs.forEach { tab ->
                     NavigationBarItem(
                         selected = currentRoute == tab.route,
-                        onClick = {
-                            nav.navigate(tab.route) {
-                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { nav.navigateToTab(tab.route) },
                         icon = { Icon(tab.icon, null) },
                         label = { Text(tab.label) },
                     )
@@ -135,9 +148,10 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
             composable(Routes.OVERVIEW) {
                 OverviewScreen(
                     onOpenTransaction = { nav.navigate(Routes.tx(it)) },
-                    onOpenHistory = { nav.navigate(Routes.HISTORY) },
+                    onOpenHistory = { nav.navigateToTab(Routes.HISTORY) },
                     onOpenWallets = { nav.navigate(Routes.WALLETS) },
-                    onOpenPlans = { nav.navigate(Routes.PLANS) },
+                    onOpenWallet = { nav.navigate(Routes.tx(walletId = it)) },
+                    onOpenPlans = { nav.navigateToTab(Routes.PLANS) },
                     onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                     onOpenStore = { nav.navigate(Routes.NOTIF_LOG) },
                 )
@@ -162,10 +176,11 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
                 )
             }
             composable(
-                "tx/{id}?kind={kind}",
+                "tx/{id}?kind={kind}&walletId={walletId}",
                 arguments = listOf(
                     navArgument("id") { type = NavType.LongType },
                     navArgument("kind") { type = NavType.StringType; defaultValue = "EXPENSE" },
+                    navArgument("walletId") { type = NavType.LongType; defaultValue = 0L },
                 ),
             ) { entry ->
                 TransactionEditScreen(
@@ -173,6 +188,7 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
                     initialKind = entry.arguments?.getString("kind") ?: "EXPENSE",
                     onBack = { nav.popBackStack() },
                     onNewCategory = { kind -> nav.navigate(Routes.category(0, kind)) },
+                    walletId = entry.arguments?.getLong("walletId") ?: 0L,
                 )
             }
             composable(Routes.WALLETS) { WalletsScreen(onEdit = { nav.navigate(Routes.wallet(it)) }, onBack = { nav.popBackStack() }) }

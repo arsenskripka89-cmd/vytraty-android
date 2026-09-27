@@ -7,6 +7,7 @@ import ua.vytraty.app.data.db.Seed
 import ua.vytraty.app.data.update.UpdateCheckWorker
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.notifications.AppNotifications
+import ua.vytraty.app.notifications.PaymentNotificationListener
 
 class VytratyApp : Application() {
     lateinit var container: AppContainer
@@ -17,6 +18,8 @@ class VytratyApp : Application() {
         container = AppContainer(this)
         AppNotifications.createChannels(this)
         UpdateCheckWorker.schedule(this)
+        // Some firmware drops the listener binding after the app is killed; payments are then missed silently.
+        PaymentNotificationListener.rebind(this)
         container.appScope.launch {
             Seed.seedIfEmpty(container.db)
             container.plannedPayments.rescheduleAll()

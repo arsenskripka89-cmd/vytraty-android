@@ -33,6 +33,9 @@ data class Settings(
     /** PrivatBank rates, "USD=44.6;EUR=51.3" in UAH per unit, and when they were fetched */
     val ratesRaw: String = "",
     val ratesUpdated: Long = 0,
+    /** When the user last opened the "no rule" / "no category" reminders: only newer items bring them back. */
+    val unmatchedSeenAt: Long = 0,
+    val uncategorizedSeenAt: Long = 0,
 )
 
 class SettingsRepository(private val context: Context) {
@@ -50,6 +53,8 @@ class SettingsRepository(private val context: Context) {
         val monobankAutoSync = booleanPreferencesKey("monobank_auto_sync")
         val mainCurrency = stringPreferencesKey("main_currency")
         val onboardingDone = booleanPreferencesKey("onboarding_done")
+        val unmatchedSeenAt = longPreferencesKey("unmatched_seen_at")
+        val uncategorizedSeenAt = longPreferencesKey("uncategorized_seen_at")
     }
 
     val settings: Flow<Settings> = context.dataStore.data.map { p ->
@@ -67,6 +72,8 @@ class SettingsRepository(private val context: Context) {
             monobankAutoSync = p[Keys.monobankAutoSync] ?: true,
             mainCurrency = p[Keys.mainCurrency] ?: "UAH",
             onboardingDone = p[Keys.onboardingDone] ?: false,
+            unmatchedSeenAt = p[Keys.unmatchedSeenAt] ?: 0L,
+            uncategorizedSeenAt = p[Keys.uncategorizedSeenAt] ?: 0L,
         )
     }
 
@@ -87,4 +94,6 @@ class SettingsRepository(private val context: Context) {
         it[Keys.ratesUpdated] = updated
     }
     suspend fun setOnboardingDone(v: Boolean) = context.dataStore.edit { it[Keys.onboardingDone] = v }
+    suspend fun markUnmatchedSeen(at: Long = System.currentTimeMillis()) = context.dataStore.edit { it[Keys.unmatchedSeenAt] = at }
+    suspend fun markUncategorizedSeen(at: Long = System.currentTimeMillis()) = context.dataStore.edit { it[Keys.uncategorizedSeenAt] = at }
 }
