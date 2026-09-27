@@ -1,5 +1,6 @@
 package ua.vytraty.app.ui.navigation
 
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -144,7 +145,8 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = Routes.OVERVIEW, modifier = Modifier.padding(padding)) {
+        // The status and navigation bars are already paid for here: inner screens must not pad for them again.
+        NavHost(nav, startDestination = Routes.OVERVIEW, modifier = Modifier.padding(padding).consumeWindowInsets(padding)) {
             composable(Routes.OVERVIEW) {
                 OverviewScreen(
                     onOpenTransaction = { nav.navigate(Routes.tx(it)) },
