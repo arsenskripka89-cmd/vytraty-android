@@ -201,6 +201,11 @@ fun OverviewScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
+    val listenerConnected by PaymentNotificationListener.connected.collectAsStateWithLifecycle()
+    // Right after start the system needs a moment to bind the listener; warn only if it still has not.
+    var bindGraceOver by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(8_000); bindGraceOver = true }
+
     AppScaffold(title = Dates.formatMonth(YearMonth.now())) { padding ->
         LazyColumn(Modifier.padding(padding), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 96.dp)) {
             if (!listenerEnabled) item {
@@ -216,6 +221,21 @@ fun OverviewScreen(
                         Column {
                             Text("Автозахоплення вимкнено", fontWeight = FontWeight.Bold)
                             Text("Надайте доступ до сповіщень, щоб платежі з Google Pay та банків записувались самі. Торкніться, щоб відкрити налаштування.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            if (listenerEnabled && !listenerConnected && bindGraceOver) item {
+                Card(
+                    Modifier.fillMaxWidth().padding(16.dp, 8.dp).clickable(onClick = onOpenSettings),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.NotificationsOff, null)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("Сповіщення не надходять", fontWeight = FontWeight.Bold)
+                            Text("Система не підключила застосунок до сповіщень — платежі зараз не записуються. Торкніться, щоб перепідключити.", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }

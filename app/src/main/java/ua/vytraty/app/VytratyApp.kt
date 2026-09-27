@@ -18,8 +18,9 @@ class VytratyApp : Application() {
         container = AppContainer(this)
         AppNotifications.createChannels(this)
         UpdateCheckWorker.schedule(this)
-        // Some firmware drops the listener binding after the app is killed; payments are then missed silently.
-        PaymentNotificationListener.rebind(this)
+        // Some firmware drops the listener binding after the app is killed or updated; payments are then
+        // missed silently. This also runs right after an update (BootReceiver listens to MY_PACKAGE_REPLACED).
+        container.appScope.launch { PaymentNotificationListener.Watchdog.ensureConnected(this@VytratyApp) }
         container.appScope.launch {
             Seed.seedIfEmpty(container.db)
             container.plannedPayments.rescheduleAll()

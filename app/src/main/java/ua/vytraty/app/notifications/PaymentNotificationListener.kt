@@ -3,6 +3,7 @@ package ua.vytraty.app.notifications
 import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.PackageManager
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -11,6 +12,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import ua.vytraty.app.VytratyApp
 import ua.vytraty.app.domain.parser.BankSource
@@ -34,6 +37,7 @@ class PaymentNotificationListener : NotificationListenerService() {
      */
     override fun onListenerConnected() {
         super.onListenerConnected()
+        connected.value = true
         val active = try { activeNotifications } catch (e: Exception) { null } ?: return
         val recent = System.currentTimeMillis() - CATCH_UP_MS
         active.filter { it.postTime > recent }.forEach { handle(it, active) }
@@ -42,6 +46,7 @@ class PaymentNotificationListener : NotificationListenerService() {
     /** Ask the system to bind us again instead of silently missing every payment until reboot. */
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        connected.value = false
         rebind(this)
     }
 
@@ -72,6 +77,11 @@ class PaymentNotificationListener : NotificationListenerService() {
     companion object {
         private const val TAG = "PaymentListener"
         private const val CATCH_UP_MS = 12 * 60 * 60 * 1000L
+        /** How long the system gets to bind the listener by itself before it is forced to. */
+        private const val BIND_GRACE_MS = 5_000L
+
+        /** Whether the system has actually bound the listener in this process — access alone does not mean that. */
+        val connected = MutableStateFlow(false)
 
         /** Title and body of a notification; the expanded text wins over the collapsed one. */
         fun extract(n: Notification): Pair<String?, String?>? {
@@ -102,6 +112,37 @@ class PaymentNotificationListener : NotificationListenerService() {
                 NotificationListenerService.requestRebind(ComponentName(context, PaymentNotificationListener::class.java))
             } catch (e: Exception) {
                 Log.w(TAG, "requestRebind failed", e)
+            }
+        }
+    }
+
+    /**
+     * Some firmware keeps notification access granted after an app update but never binds the listener
+     * again, and [requestRebind] alone does not wake it: every payment is then missed silently. When the
+     * listener is still not connected after a grace period, its component is switched off and on — the
+     * system treats that as a new listener and binds it, and [onListenerConnected] picks up the payments
+     * still on the shade.
+     */
+    object Watchdog {
+        suspend fun ensureConnected(context: Context, force: Boolean = false) {
+            if (!isEnabled(context)) return
+            if (!force) {
+                rebind(context)
+                delay(BIND_GRACE_MS)
+                if (connected.value) return
+            }
+            toggleComponent(context)
+            rebind(context)
+        }
+
+        private fun toggleComponent(context: Context) {
+            val pm = context.packageManager
+            val me = ComponentName(context, PaymentNotificationListener::class.java)
+            try {
+                pm.setComponentEnabledSetting(me, PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+                pm.setComponentEnabledSetting(me, PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, PackageManager.DONT_KILL_APP)
+            } catch (e: Exception) {
+                Log.w(TAG, "Listener component toggle failed", e)
             }
         }
     }

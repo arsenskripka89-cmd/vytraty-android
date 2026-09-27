@@ -56,6 +56,8 @@ class BootReceiver : BroadcastReceiver() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 app.container.plannedPayments.rescheduleAll()
+                // After an update some firmware never binds the notification listener again by itself.
+                PaymentNotificationListener.Watchdog.ensureConnected(app)
             } finally {
                 pending.finish()
             }
