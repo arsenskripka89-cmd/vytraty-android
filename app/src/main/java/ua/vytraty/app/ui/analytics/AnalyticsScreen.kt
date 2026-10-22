@@ -2,6 +2,8 @@
 
 package ua.vytraty.app.ui.analytics
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,9 +13,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -41,13 +46,17 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import ua.vytraty.app.data.db.CategorySum
 import ua.vytraty.app.data.db.DaySum
 import ua.vytraty.app.data.db.MonthSum
 import ua.vytraty.app.data.db.TxKind
+import ua.vytraty.app.data.rates.ExchangeRates
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Dates
 import ua.vytraty.app.domain.Money
@@ -66,31 +75,88 @@ import ua.vytraty.app.ui.components.charts.PieSlice
 import ua.vytraty.app.ui.components.toColor
 import ua.vytraty.app.ui.theme.ExpenseRed
 import ua.vytraty.app.ui.theme.IncomeGreen
+import ua.vytraty.app.ui.theme.WarnAmber
 import java.time.LocalDate
 import java.time.YearMonth
 
-data class AnalyticsFilters(val month: YearMonth = YearMonth.now(), val walletId: Long? = null, val kind: TxKind = TxKind.EXPENSE)
+data class AnalyticsFilters(
+    val month: YearMonth = YearMonth.now(),
+    val walletId: Long? = null,
+    val kind: TxKind = TxKind.EXPENSE,
+    /** Currency to show everything in; null = the main currency from the settings. */
+    val currency: String? = null,
+)
 
+/** Totals converted into [currency], one row per category / month / day. */
 data class AnalyticsState(
+    val currency: String = "UAH",
     val byCategory: List<CategorySum> = emptyList(),
     val months: List<MonthSum> = emptyList(),
     val days: List<DaySum> = emptyList(),
+    /** Other currencies that were converted into [currency]. */
+    val converted: Set<String> = emptySet(),
+    /** Currencies without a rate: left out of every total. */
+    val missing: Set<String> = emptySet(),
+    val rates: Map<String, Double> = mapOf("UAH" to 1.0),
+    val ratesUpdated: Long = 0,
 )
+
+/** Adds up per-currency sums from the database as one currency, with the cached exchange rates. */
+fun convertAnalytics(
+    currency: String,
+    rates: Map<String, Double>,
+    byCategory: List<CategorySum>,
+    months: List<MonthSum>,
+    days: List<DaySum>,
+): AnalyticsState {
+    val missing = mutableSetOf<String>()
+    fun sum(values: List<Pair<Long, String>>): Long = ExchangeRates.sum(values, currency, rates).also { missing += it.missing }.minor
+    val categories = byCategory.groupBy { it.categoryId }.mapNotNull { (id, parts) ->
+        val total = sum(parts.map { it.total to it.currency })
+        // spending only in currencies without a rate has nothing to show
+        if (parts.all { it.currency.uppercase() in missing }) null else CategorySum(id, currency, total)
+    }.sortedByDescending { it.total }
+    val monthTotals = months.groupBy { it.monthKey }.map { (key, parts) ->
+        MonthSum(key, currency, sum(parts.map { it.expense to it.currency }), sum(parts.map { it.income to it.currency }))
+    }
+    val dayTotals = days.groupBy { it.dayKey }.map { (key, parts) ->
+        DaySum(key, currency, sum(parts.map { it.expense to it.currency }), sum(parts.map { it.income to it.currency }))
+    }
+    val seen = (byCategory.map { it.currency } + months.map { it.currency } + days.map { it.currency }).map { it.uppercase() }.toSet()
+    return AnalyticsState(
+        currency = currency,
+        byCategory = categories,
+        months = monthTotals,
+        days = dayTotals,
+        converted = seen - currency.uppercase() - missing,
+        missing = missing,
+        rates = rates,
+    )
+}
 
 class AnalyticsViewModel(c: AppContainer) : ViewModel() {
     private val db = c.db
     val filters = MutableStateFlow(AnalyticsFilters())
     val wallets = db.walletDao().observeActive().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val categories = db.categoryDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val money = c.settings.settings.map { Triple(it.mainCurrency, it.ratesRaw, it.ratesUpdated) }.distinctUntilChanged()
 
-    val state = filters.flatMapLatest { f ->
+    init {
+        viewModelScope.launch { c.exchangeRates.refreshIfStale() }
+    }
+
+    val state = combine(filters, money) { f, m -> f to m }.flatMapLatest { (f, m) ->
+        val (mainCurrency, ratesRaw, ratesUpdated) = m
         val r = Dates.monthRange(f.month)
         val sixMonths = Dates.monthRange(f.month.minusMonths(5)).first..r.last
         combine(
             db.transactionDao().observeSumsByCategory(f.kind, r.first, r.last, f.walletId),
             db.transactionDao().observeMonthSums(sixMonths.first, sixMonths.last, f.walletId),
             db.transactionDao().observeDaySums(r.first, r.last, f.walletId),
-        ) { cats, months, days -> AnalyticsState(cats, months, days) }
+        ) { cats, months, days ->
+            convertAnalytics(f.currency ?: mainCurrency, ExchangeRates.decode(ratesRaw), cats, months, days)
+                .copy(ratesUpdated = ratesUpdated)
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AnalyticsState())
 
     fun update(block: AnalyticsFilters.() -> AnalyticsFilters) = filters.update(block)
@@ -104,7 +170,8 @@ fun AnalyticsScreen() {
     val wallets by vm.wallets.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
     var showWallet by remember { mutableStateOf(false) }
-    val currency = wallets.firstOrNull { it.id == f.walletId }?.currency ?: "UAH"
+    var showCurrency by remember { mutableStateOf(false) }
+    val currency = s.currency
     val outlineColor = MaterialTheme.colorScheme.outline
 
     AppScaffold(title = "Аналітика") { padding ->
@@ -115,13 +182,28 @@ fun AnalyticsScreen() {
                     Text(Dates.formatMonth(f.month), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
                     IconButton(onClick = { vm.update { copy(month = month.plusMonths(1)) } }) { Icon(Icons.Filled.ChevronRight, null) }
                 }
-                Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
-                        SegmentedButton(selected = f.kind == TxKind.EXPENSE, onClick = { vm.update { copy(kind = TxKind.EXPENSE) } }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Витрати") }
-                        SegmentedButton(selected = f.kind == TxKind.INCOME, onClick = { vm.update { copy(kind = TxKind.INCOME) } }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Доходи") }
-                    }
-                    Spacer(Modifier.width(8.dp))
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    SegmentedButton(selected = f.kind == TxKind.EXPENSE, onClick = { vm.update { copy(kind = TxKind.EXPENSE) } }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Витрати") }
+                    SegmentedButton(selected = f.kind == TxKind.INCOME, onClick = { vm.update { copy(kind = TxKind.INCOME) } }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Доходи") }
+                }
+                Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = f.walletId != null, onClick = { showWallet = true }, label = { Text(wallets.firstOrNull { it.id == f.walletId }?.name ?: "Усі гаманці") })
+                    // Every amount is shown in this one currency; the others are converted at the cached rate.
+                    Box {
+                        FilterChip(
+                            selected = f.currency != null, onClick = { showCurrency = true },
+                            label = { Text("${Money.symbol(currency)} $currency") },
+                            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) },
+                        )
+                        DropdownMenu(expanded = showCurrency, onDismissRequest = { showCurrency = false }) {
+                            Money.currencies.filter { it == "UAH" || s.rates.containsKey(it) }.forEach { cur ->
+                                DropdownMenuItem(
+                                    text = { Text("$cur  ${Money.symbol(cur)}") },
+                                    onClick = { vm.update { copy(currency = cur) }; showCurrency = false },
+                                )
+                            }
+                        }
+                    }
                 }
             }
             val total = s.byCategory.sumOf { it.total }
@@ -132,6 +214,16 @@ fun AnalyticsScreen() {
             item {
                 if (slices.isEmpty()) EmptyState("Немає даних за цей місяць")
                 else DonutChart(slices, if (f.kind == TxKind.EXPENSE) "Витрати" else "Доходи", Money.format(total, currency))
+                if (s.converted.isNotEmpty()) Text(
+                    "${s.converted.sorted().joinToString(", ")} перераховано в ${Money.symbol(currency)} за курсом на ${Dates.formatDateTime(s.ratesUpdated)}",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), textAlign = TextAlign.Center,
+                )
+                if (s.missing.isNotEmpty()) Text(
+                    "Без курсу, не враховано: ${s.missing.sorted().joinToString(", ")}",
+                    style = MaterialTheme.typography.labelSmall, color = WarnAmber,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), textAlign = TextAlign.Center,
+                )
             }
             items(s.byCategory, key = { it.categoryId ?: -1 }) { cs ->
                 val cat = categories.firstOrNull { it.id == cs.categoryId }
@@ -185,7 +277,12 @@ fun AnalyticsScreen() {
     }
     if (showWallet) {
         val all = listOf(ua.vytraty.app.data.db.WalletEntity(id = -1, name = "Усі гаманці")) + wallets
-        WalletPickerSheet(all, f.walletId ?: -1, onSelect = { w -> vm.update { copy(walletId = if (w.id == -1L) null else w.id) }; showWallet = false }, onDismiss = { showWallet = false })
+        WalletPickerSheet(
+            all, f.walletId ?: -1,
+            // one wallet is shown in its own currency, all of them in the main one
+            onSelect = { w -> vm.update { if (w.id == -1L) copy(walletId = null, currency = null) else copy(walletId = w.id, currency = w.currency) }; showWallet = false },
+            onDismiss = { showWallet = false },
+        )
     }
 }
 

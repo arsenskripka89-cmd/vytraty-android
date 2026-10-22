@@ -116,24 +116,24 @@ interface TransactionDao {
     @Query("SELECT COUNT(*) FROM transactions WHERE categoryId IS NULL AND kind != 'TRANSFER'")
     fun observeUncategorizedCount(): Flow<Int>
 
-    @Query("SELECT categoryId, SUM(amountMinor) AS total FROM transactions WHERE kind = :kind AND timestamp BETWEEN :from AND :to AND (:walletId IS NULL OR walletId = :walletId) GROUP BY categoryId ORDER BY total DESC")
+    @Query("SELECT categoryId, currency, SUM(amountMinor) AS total FROM transactions WHERE kind = :kind AND timestamp BETWEEN :from AND :to AND (:walletId IS NULL OR walletId = :walletId) GROUP BY categoryId, currency")
     fun observeSumsByCategory(kind: TxKind, from: Long, to: Long, walletId: Long?): Flow<List<CategorySum>>
 
     @Query(
-        "SELECT strftime('%Y-%m', timestamp / 1000, 'unixepoch', 'localtime') AS monthKey, " +
+        "SELECT strftime('%Y-%m', timestamp / 1000, 'unixepoch', 'localtime') AS monthKey, currency, " +
             "SUM(CASE WHEN kind = 'EXPENSE' THEN amountMinor ELSE 0 END) AS expense, " +
             "SUM(CASE WHEN kind = 'INCOME' THEN amountMinor ELSE 0 END) AS income " +
             "FROM transactions WHERE timestamp BETWEEN :from AND :to AND (:walletId IS NULL OR walletId = :walletId) " +
-            "GROUP BY monthKey ORDER BY monthKey"
+            "GROUP BY monthKey, currency ORDER BY monthKey"
     )
     fun observeMonthSums(from: Long, to: Long, walletId: Long?): Flow<List<MonthSum>>
 
     @Query(
-        "SELECT strftime('%Y-%m-%d', timestamp / 1000, 'unixepoch', 'localtime') AS dayKey, " +
+        "SELECT strftime('%Y-%m-%d', timestamp / 1000, 'unixepoch', 'localtime') AS dayKey, currency, " +
             "SUM(CASE WHEN kind = 'EXPENSE' THEN amountMinor ELSE 0 END) AS expense, " +
             "SUM(CASE WHEN kind = 'INCOME' THEN amountMinor ELSE 0 END) AS income " +
             "FROM transactions WHERE timestamp BETWEEN :from AND :to AND (:walletId IS NULL OR walletId = :walletId) " +
-            "GROUP BY dayKey ORDER BY dayKey"
+            "GROUP BY dayKey, currency ORDER BY dayKey"
     )
     fun observeDaySums(from: Long, to: Long, walletId: Long?): Flow<List<DaySum>>
 
@@ -158,11 +158,11 @@ interface TransactionDao {
     )
     fun observeTransferIncoming(): Flow<List<WalletBalance>>
 
-    @Query("SELECT SUM(amountMinor) FROM transactions WHERE kind = 'EXPENSE' AND timestamp BETWEEN :from AND :to AND (:categoryId IS NULL OR categoryId = :categoryId)")
-    suspend fun sumExpenses(from: Long, to: Long, categoryId: Long?): Long?
+    @Query("SELECT currency, SUM(amountMinor) AS total FROM transactions WHERE kind = 'EXPENSE' AND timestamp BETWEEN :from AND :to AND (:categoryId IS NULL OR categoryId = :categoryId) GROUP BY currency")
+    suspend fun sumExpenses(from: Long, to: Long, categoryId: Long?): List<CurrencyTotal>
 
-    @Query("SELECT SUM(amountMinor) FROM transactions WHERE kind = 'EXPENSE' AND timestamp BETWEEN :from AND :to AND (:categoryId IS NULL OR categoryId = :categoryId)")
-    fun observeSumExpenses(from: Long, to: Long, categoryId: Long?): Flow<Long?>
+    @Query("SELECT currency, SUM(amountMinor) AS total FROM transactions WHERE kind = 'EXPENSE' AND timestamp BETWEEN :from AND :to AND (:categoryId IS NULL OR categoryId = :categoryId) GROUP BY currency")
+    fun observeSumExpenses(from: Long, to: Long, categoryId: Long?): Flow<List<CurrencyTotal>>
 
     @Query(
         "SELECT COALESCE(SUM(CASE WHEN kind = 'INCOME' THEN amountMinor ELSE -amountMinor END), 0) " +

@@ -48,9 +48,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -87,6 +89,26 @@ import java.util.concurrent.TimeUnit
 
 data class BudgetProgress(val budget: BudgetEntity, val spent: Long, val categoryName: String)
 
+/** Spending of every budget within [range], each converted into the budget's own currency. */
+fun observeBudgetProgress(c: AppContainer, range: LongRange): Flow<List<BudgetProgress>> = combine(
+    c.db.budgetDao().observeAll(),
+    c.db.categoryDao().observeAll(),
+    c.settings.settings.map { ExchangeRates.decode(it.ratesRaw) }.distinctUntilChanged(),
+) { bs, cats, rates -> Triple(bs, cats, rates) }
+    .flatMapLatest { (bs, cats, rates) ->
+        if (bs.isEmpty()) flowOf(emptyList()) else combine(
+            bs.map { b ->
+                c.db.transactionDao().observeSumExpenses(range.first, range.last, b.categoryId).map { spent ->
+                    BudgetProgress(
+                        b,
+                        ExchangeRates.sum(spent.map { it.total to it.currency }, b.currency, rates).minor,
+                        b.categoryId?.let { id -> cats.firstOrNull { it.id == id }?.name } ?: "Усі витрати",
+                    )
+                }
+            },
+        ) { it.toList() }
+    }
+
 data class OverviewState(
     val wallets: List<WalletWithBalance> = emptyList(),
     val monthSums: List<CurrencySum> = emptyList(),
@@ -99,37 +121,18 @@ data class OverviewState(
     val rates: Map<String, Double> = mapOf("UAH" to 1.0),
     val ratesUpdated: Long = 0,
 ) {
-    /** Sum converted into [mainCurrency]; currencies without a rate are reported instead of added. */
-    private fun convert(values: List<Pair<Long, String>>): Pair<Long, Set<String>> {
-        var total = 0L
-        val missing = mutableSetOf<String>()
-        values.forEach { (minor, currency) ->
-            val converted = ExchangeRates.convert(minor, currency, mainCurrency, rates)
-            if (converted == null) missing += currency.uppercase() else total += converted
-        }
-        return total to missing
-    }
-
-    val expense get() = convert(monthSums.map { it.expense to it.currency })
-    val income get() = convert(monthSums.map { it.income to it.currency })
-    val balance get() = convert(wallets.map { it.balanceMinor to it.wallet.currency })
-    val missingRates: Set<String> get() = expense.second + income.second + balance.second
+    /** Sums converted into [mainCurrency]; currencies without a rate are reported instead of added. */
+    val expense get() = ExchangeRates.sum(monthSums.map { it.expense to it.currency }, mainCurrency, rates)
+    val income get() = ExchangeRates.sum(monthSums.map { it.income to it.currency }, mainCurrency, rates)
+    val balance get() = ExchangeRates.sum(wallets.map { it.balanceMinor to it.wallet.currency }, mainCurrency, rates)
+    val missingRates: Set<String> get() = expense.missing + income.missing + balance.missing
 }
 
 class OverviewViewModel(private val c: AppContainer) : ViewModel() {
     private val db = c.db
     private val range = Dates.monthRange(YearMonth.now())
 
-    private val budgets = combine(db.budgetDao().observeAll(), db.categoryDao().observeAll()) { bs, cats -> bs to cats }
-        .flatMapLatest { (bs, cats) ->
-            if (bs.isEmpty()) flowOf(emptyList()) else combine(
-                bs.map { b ->
-                    db.transactionDao().observeSumExpenses(range.first, range.last, b.categoryId).map { spent ->
-                        BudgetProgress(b, spent ?: 0L, b.categoryId?.let { id -> cats.firstOrNull { it.id == id }?.name } ?: "Усі витрати")
-                    }
-                },
-            ) { it.toList() }
-        }
+    private val budgets = observeBudgetProgress(c, range)
 
     private val monthSums = db.transactionDao().observeSumsByCurrency(range.first, range.last)
     private val unmatched = db.notificationLogDao()
@@ -316,10 +319,10 @@ fun Dashboard(s: OverviewState, onCurrency: (String) -> Unit, onRefreshRates: ()
             IconButton(onClick = onRefreshRates) { Icon(Icons.Filled.Refresh, "Оновити курс") }
         }
         Row(Modifier.fillMaxWidth()) {
-            StatTile("Витрати за місяць", Money.format(s.expense.first, s.mainCurrency), ExpenseRed, Modifier.weight(1f))
-            StatTile("Доходи за місяць", Money.format(s.income.first, s.mainCurrency), IncomeGreen, Modifier.weight(1f))
+            StatTile("Витрати за місяць", Money.format(s.expense.minor, s.mainCurrency), ExpenseRed, Modifier.weight(1f))
+            StatTile("Доходи за місяць", Money.format(s.income.minor, s.mainCurrency), IncomeGreen, Modifier.weight(1f))
         }
-        StatTile("Разом на гаманцях", Money.format(s.balance.first, s.mainCurrency), MaterialTheme.colorScheme.onSurface)
+        StatTile("Разом на гаманцях", Money.format(s.balance.minor, s.mainCurrency), MaterialTheme.colorScheme.onSurface)
         val rateLine = listOf("USD", "EUR")
             .mapNotNull { code -> s.rates[code]?.let { "${Money.symbol(code)} " + String.format("%.2f", it) } }
             .joinToString(" · ")

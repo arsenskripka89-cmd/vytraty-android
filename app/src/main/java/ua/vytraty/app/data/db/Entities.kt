@@ -160,10 +160,12 @@ data class TransactionRow(
     val categoryColor: Long?,
 )
 
-data class CategorySum(val categoryId: Long?, val total: Long)
+// Sums come per currency: adding hryvnias to euros is left to the code that knows the rates.
+data class CategorySum(val categoryId: Long?, val currency: String, val total: Long)
 data class CurrencySum(val currency: String, val expense: Long, val income: Long)
-data class MonthSum(val monthKey: String, val expense: Long, val income: Long)
-data class DaySum(val dayKey: String, val expense: Long, val income: Long)
+data class CurrencyTotal(val currency: String, val total: Long)
+data class MonthSum(val monthKey: String, val currency: String, val expense: Long, val income: Long)
+data class DaySum(val dayKey: String, val currency: String, val expense: Long, val income: Long)
 data class WalletBalance(val walletId: Long, val delta: Long)
 
 enum class RuleType { WALLET, CATEGORY }

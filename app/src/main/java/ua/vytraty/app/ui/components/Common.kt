@@ -252,6 +252,12 @@ fun CurrencyPicker(value: String, onChange: (String) -> Unit, label: String = "�
     }
 }
 
+/** A currency that follows from something else (the wallet); tapping it changes that instead. Null shows a dash. */
+@Composable
+fun CurrencyField(value: String?, onClick: () -> Unit, label: String = "Валюта", modifier: Modifier = Modifier) {
+    PickerField(label, value?.let { "$it  ${Money.symbol(it)}" } ?: "—", onClick = onClick, modifier = modifier)
+}
+
 @Composable
 fun AmountText(minor: Long, currency: String, kind: TxKind, modifier: Modifier = Modifier, large: Boolean = false) {
     val (color, prefix) = when {

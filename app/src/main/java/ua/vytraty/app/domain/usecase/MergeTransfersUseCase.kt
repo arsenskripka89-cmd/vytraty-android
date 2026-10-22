@@ -161,8 +161,17 @@ class MergeTransfersUseCase(
             val received = tx.receivedMinor ?: return null
             val receivedCurrency = tx.receivedCurrency ?: return null
             if (received <= 0 || tx.amountMinor <= 0 || receivedCurrency.equals(tx.currency, true)) return null
-            val rate = BigDecimal(tx.amountMinor).divide(BigDecimal(received), 4, RoundingMode.HALF_UP)
-            return "Курс: 1 ${Money.symbol(receivedCurrency)} = ${rate.toPlainString().replace('.', ',')} ${Money.symbol(tx.currency)}"
+            return "Курс: " + rateText(tx.amountMinor, tx.currency, received, receivedCurrency)
+        }
+
+        /**
+         * "1 € = 51,8395 ₴" from two amounts of one exchange: the dearer currency is counted in units,
+         * whichever way the money went, so the rate never reads as "1 ₴ = 0,0193 €". Both must be positive.
+         */
+        fun rateText(sentMinor: Long, sentCurrency: String, receivedMinor: Long, receivedCurrency: String): String {
+            if (sentMinor < receivedMinor) return rateText(receivedMinor, receivedCurrency, sentMinor, sentCurrency)
+            val rate = BigDecimal(sentMinor).divide(BigDecimal(receivedMinor), 4, RoundingMode.HALF_UP)
+            return "1 ${Money.symbol(receivedCurrency)} = ${rate.toPlainString().replace('.', ',')} ${Money.symbol(sentCurrency)}"
         }
     }
 }

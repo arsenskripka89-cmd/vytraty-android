@@ -48,6 +48,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import ua.vytraty.app.data.db.CategoryEntity
@@ -55,6 +56,7 @@ import ua.vytraty.app.data.db.TransactionRow
 import ua.vytraty.app.data.db.TxKind
 import ua.vytraty.app.data.db.TxSource
 import ua.vytraty.app.data.db.WalletEntity
+import ua.vytraty.app.data.rates.ExchangeRates
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Dates
 import ua.vytraty.app.domain.Money
@@ -88,6 +90,9 @@ class HistoryViewModel(c: AppContainer) : ViewModel() {
         val r = Dates.monthRange(f.month)
         db.transactionDao().observeRows(r.first, r.last, f.walletId, f.categoryId, f.onlyUncategorized, f.query.trim())
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** Main currency and the cached rates, to add up rows in different currencies. */
+    val money = c.settings.settings.map { it.mainCurrency to ExchangeRates.decode(it.ratesRaw) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "UAH" to mapOf("UAH" to 1.0))
 
     fun update(block: HistoryFilters.() -> HistoryFilters) = filters.update(block)
 }
@@ -99,9 +104,13 @@ fun HistoryScreen(onOpenTransaction: (Long) -> Unit) {
     val rows by vm.rows.collectAsStateWithLifecycle()
     val wallets by vm.wallets.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
+    val money by vm.money.collectAsStateWithLifecycle()
     var showWallet by remember { mutableStateOf(false) }
     var showCategory by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
+    // one wallet in its own currency, all of them in the main one
+    val currency = wallets.firstOrNull { it.id == f.walletId }?.currency ?: money.first
+    val rates = money.second
 
     AppScaffold(
         title = "Історія",
@@ -136,14 +145,19 @@ fun HistoryScreen(onOpenTransaction: (Long) -> Unit) {
                     leadingIcon = { Icon(Icons.Filled.Warning, null, tint = WarnAmber) },
                 )
             }
-            val expense = rows.filter { it.kind == TxKind.EXPENSE }.sumOf { it.amountMinor }
-            val income = rows.filter { it.kind == TxKind.INCOME }.sumOf { it.amountMinor }
+            val expense = sumIn(rows, TxKind.EXPENSE, currency, rates)
+            val income = sumIn(rows, TxKind.INCOME, currency, rates)
             Row(Modifier.fillMaxWidth().padding(16.dp, 8.dp)) {
-                Text("Витрати: ${Money.format(expense)}", color = ExpenseRed, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                Text("Доходи: ${Money.format(income)}", color = IncomeGreen, style = MaterialTheme.typography.bodyMedium)
+                Text("Витрати: ${Money.format(expense.minor, currency)}", color = ExpenseRed, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text("Доходи: ${Money.format(income.minor, currency)}", color = IncomeGreen, style = MaterialTheme.typography.bodyMedium)
             }
+            val missing = expense.missing + income.missing
+            if (missing.isNotEmpty()) Text(
+                "Без курсу, не враховано: ${missing.sorted().joinToString(", ")}",
+                style = MaterialTheme.typography.labelSmall, color = WarnAmber, modifier = Modifier.padding(horizontal = 16.dp),
+            )
             if (rows.isEmpty()) EmptyState("Немає операцій за вибраними фільтрами")
-            TransactionList(rows, onOpenTransaction)
+            TransactionList(rows, onOpenTransaction, currency = currency, rates = rates)
         }
     }
     if (showWallet) WalletPickerSheetWithClear(wallets, f.walletId, onSelect = { vm.update { copy(walletId = it) }; showWallet = false }, onDismiss = { showWallet = false })
@@ -159,18 +173,28 @@ private fun WalletPickerSheetWithClear(wallets: List<WalletEntity>, selected: Lo
     WalletPickerSheet(all, selected ?: -1, onSelect = { onSelect(if (it.id == -1L) null else it.id) }, onDismiss = onDismiss)
 }
 
+/** Rows of [kind] added up in [currency]. */
+private fun sumIn(rows: List<TransactionRow>, kind: TxKind, currency: String, rates: Map<String, Double>) =
+    ExchangeRates.sum(rows.filter { it.kind == kind }.map { it.amountMinor to it.currency }, currency, rates)
+
 @Composable
-fun TransactionList(rows: List<TransactionRow>, onOpen: (Long) -> Unit, contentPadding: PaddingValues = PaddingValues(bottom = 96.dp)) {
+fun TransactionList(
+    rows: List<TransactionRow>,
+    onOpen: (Long) -> Unit,
+    contentPadding: PaddingValues = PaddingValues(bottom = 96.dp),
+    currency: String = "UAH",
+    rates: Map<String, Double> = mapOf("UAH" to 1.0),
+) {
     val grouped = rows.groupBy { Dates.toLocalDate(it.timestamp) }
     LazyColumn(contentPadding = contentPadding) {
         grouped.forEach { (day, list) ->
             item(key = "h$day") {
-                val dayExpense = list.filter { it.kind == TxKind.EXPENSE }.sumOf { it.amountMinor }
+                val dayExpense = sumIn(list, TxKind.EXPENSE, currency, rates).minor
                 Row(
                     Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)).padding(16.dp, 6.dp),
                 ) {
                     Text(Dates.formatDay(list.first().timestamp), style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                    if (dayExpense > 0) Text("−${Money.format(dayExpense)}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (dayExpense > 0) Text("−${Money.format(dayExpense, currency)}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             items(list, key = { it.id }) { row -> TransactionRowItem(row, onClick = { onOpen(row.id) }) }

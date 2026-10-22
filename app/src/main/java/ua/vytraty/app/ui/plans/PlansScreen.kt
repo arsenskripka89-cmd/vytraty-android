@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalCoroutinesApi::class)
+@file:OptIn(ExperimentalMaterial3Api::class)
 
 package ua.vytraty.app.ui.plans
 
@@ -51,13 +51,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -77,8 +72,8 @@ import ua.vytraty.app.ui.components.EmptyState
 import ua.vytraty.app.ui.components.PickerField
 import ua.vytraty.app.ui.components.WalletPickerSheet
 import ua.vytraty.app.ui.components.appViewModel
-import ua.vytraty.app.ui.overview.BudgetProgress
 import ua.vytraty.app.ui.overview.BudgetRow
+import ua.vytraty.app.ui.overview.observeBudgetProgress
 import ua.vytraty.app.ui.theme.ExpenseRed
 import ua.vytraty.app.ui.theme.IncomeGreen
 import java.time.YearMonth
@@ -93,16 +88,7 @@ class PlansViewModel(private val c: AppContainer) : ViewModel() {
     val planned = db.plannedPaymentDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val categories = db.categoryDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val wallets = db.walletDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val budgets = combine(db.budgetDao().observeAll(), db.categoryDao().observeAll()) { bs, cats -> bs to cats }
-        .flatMapLatest { (bs, cats) ->
-            if (bs.isEmpty()) flowOf(emptyList()) else combine(
-                bs.map { b ->
-                    db.transactionDao().observeSumExpenses(range.first, range.last, b.categoryId).map { spent ->
-                        BudgetProgress(b, spent ?: 0L, b.categoryId?.let { id -> cats.firstOrNull { it.id == id }?.name } ?: "Усі витрати")
-                    }
-                },
-            ) { it.toList() }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val budgets = observeBudgetProgress(c, range).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun recordNow(id: Long) = viewModelScope.launch { c.plannedPayments.recordNow(id) }
     fun skip(id: Long) = viewModelScope.launch { c.plannedPayments.skip(id) }

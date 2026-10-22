@@ -24,7 +24,7 @@ class AppContainer(context: Context) {
     val db: AppDatabase = AppDatabase.build(context)
     val settings = SettingsRepository(context)
     val parserRegistry = ParserRegistry()
-    val budgetChecker = BudgetChecker(context, db)
+    val budgetChecker = BudgetChecker(context, db, settings)
     val mergeTransfers = MergeTransfersUseCase(context, db, settings)
     val recordPayment = RecordParsedPaymentUseCase(context, db, settings, parserRegistry, budgetChecker, mergeTransfers)
     val assignCategory = AssignCategoryUseCase(db)
