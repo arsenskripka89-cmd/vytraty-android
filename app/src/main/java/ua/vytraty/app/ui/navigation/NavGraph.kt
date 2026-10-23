@@ -1,5 +1,6 @@
 package ua.vytraty.app.ui.navigation
 
+import android.os.Bundle
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -30,10 +31,12 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.flow.StateFlow
+import ua.vytraty.app.data.db.TxKind
 import ua.vytraty.app.ui.analytics.AnalyticsScreen
 import ua.vytraty.app.ui.banks.BanksScreen
 import ua.vytraty.app.ui.categories.CategoriesScreen
 import ua.vytraty.app.ui.categories.CategoryEditScreen
+import ua.vytraty.app.ui.history.HistoryFilters
 import ua.vytraty.app.ui.history.HistoryScreen
 import ua.vytraty.app.ui.more.MoreScreen
 import ua.vytraty.app.ui.overview.OverviewScreen
@@ -49,6 +52,7 @@ import ua.vytraty.app.ui.settings.SettingsScreen
 import ua.vytraty.app.ui.transaction.TransactionEditScreen
 import ua.vytraty.app.ui.wallets.WalletEditScreen
 import ua.vytraty.app.ui.wallets.WalletsScreen
+import java.time.YearMonth
 
 object Routes {
     const val OVERVIEW = "overview"
@@ -71,6 +75,38 @@ object Routes {
     fun category(id: Long = 0, kind: String = "EXPENSE") = "category/$id?kind=$kind"
     fun planned(id: Long = 0) = "planned/$id"
     fun budget(id: Long = 0) = "budget/$id"
+
+    /** History opened over another screen with filters set (from an Analytics line). */
+    const val HISTORY_FILTERED =
+        "history_filtered?month={month}&walletId={walletId}&categoryId={categoryId}&uncategorized={uncategorized}&kind={kind}&currency={currency}"
+
+    // A filter that is not set is left out, so its argument takes the default instead of an empty value.
+    fun history(f: HistoryFilters) = listOfNotNull(
+        "month=${f.month}",
+        f.walletId?.let { "walletId=$it" },
+        f.categoryId?.let { "categoryId=$it" },
+        "uncategorized=true".takeIf { f.onlyUncategorized },
+        f.kind?.let { "kind=${it.name}" },
+        f.currency?.let { "currency=$it" },
+    ).joinToString("&", prefix = "history_filtered?")
+
+    val historyArguments = listOf(
+        navArgument("month") { type = NavType.StringType; defaultValue = "" },
+        navArgument("walletId") { type = NavType.LongType; defaultValue = -1L },
+        navArgument("categoryId") { type = NavType.LongType; defaultValue = -1L },
+        navArgument("uncategorized") { type = NavType.BoolType; defaultValue = false },
+        navArgument("kind") { type = NavType.StringType; defaultValue = "" },
+        navArgument("currency") { type = NavType.StringType; defaultValue = "" },
+    )
+
+    fun historyFilters(a: Bundle?) = HistoryFilters(
+        month = a?.getString("month")?.let { runCatching { YearMonth.parse(it) }.getOrNull() } ?: YearMonth.now(),
+        walletId = a?.getLong("walletId")?.takeIf { it > 0 },
+        categoryId = a?.getLong("categoryId")?.takeIf { it > 0 },
+        onlyUncategorized = a?.getBoolean("uncategorized") ?: false,
+        kind = a?.getString("kind")?.let { k -> TxKind.entries.firstOrNull { it.name == k } },
+        currency = a?.getString("currency")?.ifBlank { null },
+    )
 }
 
 /** Deep-link request coming from a tapped notification. */
@@ -159,7 +195,14 @@ fun VytratyNavHost(pendingNav: StateFlow<PendingNav?>, onPendingConsumed: () -> 
                 )
             }
             composable(Routes.HISTORY) { HistoryScreen(onOpenTransaction = { nav.navigate(Routes.tx(it)) }) }
-            composable(Routes.ANALYTICS) { AnalyticsScreen() }
+            composable(Routes.ANALYTICS) { AnalyticsScreen(onOpenHistory = { nav.navigate(Routes.history(it)) }) }
+            composable(Routes.HISTORY_FILTERED, arguments = Routes.historyArguments) { entry ->
+                HistoryScreen(
+                    onOpenTransaction = { nav.navigate(Routes.tx(it)) },
+                    initial = Routes.historyFilters(entry.arguments),
+                    onBack = { nav.popBackStack() },
+                )
+            }
             composable(Routes.PLANS) {
                 PlansScreen(
                     onEditPlanned = { nav.navigate(Routes.planned(it)) },

@@ -79,16 +79,20 @@ data class HistoryFilters(
     val categoryId: Long? = null,
     val onlyUncategorized: Boolean = false,
     val query: String = "",
+    /** Only expenses or only incomes; null = everything. */
+    val kind: TxKind? = null,
+    /** Currency of the totals; null = the wallet's own, or the main one. */
+    val currency: String? = null,
 )
 
-class HistoryViewModel(c: AppContainer) : ViewModel() {
+class HistoryViewModel(c: AppContainer, initial: HistoryFilters = HistoryFilters()) : ViewModel() {
     private val db = c.db
-    val filters = MutableStateFlow(HistoryFilters())
+    val filters = MutableStateFlow(initial)
     val wallets = db.walletDao().observeActive().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val categories = db.categoryDao().observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val rows = filters.flatMapLatest { f ->
         val r = Dates.monthRange(f.month)
-        db.transactionDao().observeRows(r.first, r.last, f.walletId, f.categoryId, f.onlyUncategorized, f.query.trim())
+        db.transactionDao().observeRows(r.first, r.last, f.walletId, f.categoryId, f.onlyUncategorized, f.query.trim(), f.kind?.name)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     /** Main currency and the cached rates, to add up rows in different currencies. */
     val money = c.settings.settings.map { it.mainCurrency to ExchangeRates.decode(it.ratesRaw) }
@@ -97,9 +101,13 @@ class HistoryViewModel(c: AppContainer) : ViewModel() {
     fun update(block: HistoryFilters.() -> HistoryFilters) = filters.update(block)
 }
 
+/**
+ * The History tab, or — with [initial] and [onBack] — the operations behind one line of Analytics
+ * (a category of a month), opened on top of it.
+ */
 @Composable
-fun HistoryScreen(onOpenTransaction: (Long) -> Unit) {
-    val vm = appViewModel { HistoryViewModel(it) }
+fun HistoryScreen(onOpenTransaction: (Long) -> Unit, initial: HistoryFilters? = null, onBack: (() -> Unit)? = null) {
+    val vm = appViewModel { HistoryViewModel(it, initial ?: HistoryFilters()) }
     val f by vm.filters.collectAsStateWithLifecycle()
     val rows by vm.rows.collectAsStateWithLifecycle()
     val wallets by vm.wallets.collectAsStateWithLifecycle()
@@ -109,11 +117,12 @@ fun HistoryScreen(onOpenTransaction: (Long) -> Unit) {
     var showCategory by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     // one wallet in its own currency, all of them in the main one
-    val currency = wallets.firstOrNull { it.id == f.walletId }?.currency ?: money.first
+    val currency = f.currency ?: wallets.firstOrNull { it.id == f.walletId }?.currency ?: money.first
     val rates = money.second
 
     AppScaffold(
         title = "Історія",
+        onBack = onBack,
         actions = { IconButton(onClick = { showSearch = !showSearch }) { Icon(Icons.Filled.Search, "Пошук") } },
     ) { padding ->
         Column(Modifier.padding(padding)) {
@@ -140,10 +149,19 @@ fun HistoryScreen(onOpenTransaction: (Long) -> Unit) {
                     label = { Text(categories.firstOrNull { it.id == f.categoryId }?.name ?: "Категорія") },
                 )
                 FilterChip(
-                    selected = f.onlyUncategorized, onClick = { vm.update { copy(onlyUncategorized = !onlyUncategorized) } },
+                    selected = f.onlyUncategorized,
+                    onClick = { vm.update { copy(onlyUncategorized = !onlyUncategorized, categoryId = if (onlyUncategorized) categoryId else null) } },
                     label = { Text("Без категорії") },
                     leadingIcon = { Icon(Icons.Filled.Warning, null, tint = WarnAmber) },
                 )
+                // Set when opened from Analytics; tapping it shows incomes and expenses again.
+                f.kind?.let { k ->
+                    FilterChip(
+                        selected = true, onClick = { vm.update { copy(kind = null) } },
+                        label = { Text(if (k == TxKind.INCOME) "Лише доходи" else "Лише витрати") },
+                        trailingIcon = { Icon(Icons.Filled.Close, "Прибрати фільтр") },
+                    )
+                }
             }
             val expense = sumIn(rows, TxKind.EXPENSE, currency, rates)
             val income = sumIn(rows, TxKind.INCOME, currency, rates)
@@ -160,10 +178,14 @@ fun HistoryScreen(onOpenTransaction: (Long) -> Unit) {
             TransactionList(rows, onOpenTransaction, currency = currency, rates = rates)
         }
     }
-    if (showWallet) WalletPickerSheetWithClear(wallets, f.walletId, onSelect = { vm.update { copy(walletId = it) }; showWallet = false }, onDismiss = { showWallet = false })
+    if (showWallet) WalletPickerSheetWithClear(
+        wallets, f.walletId,
+        onSelect = { vm.update { copy(walletId = it, currency = null) }; showWallet = false }, onDismiss = { showWallet = false },
+    )
     if (showCategory) CategoryPickerSheet(
-        categories, kind = TxKind.EXPENSE, selectedId = f.categoryId,
-        onSelect = { c: CategoryEntity? -> vm.update { copy(categoryId = c?.id) }; showCategory = false }, onDismiss = { showCategory = false },
+        categories, kind = f.kind ?: TxKind.EXPENSE, selectedId = f.categoryId,
+        onSelect = { c: CategoryEntity? -> vm.update { copy(categoryId = c?.id, onlyUncategorized = onlyUncategorized && c == null) }; showCategory = false },
+        onDismiss = { showCategory = false },
     )
 }
 
@@ -173,9 +195,11 @@ private fun WalletPickerSheetWithClear(wallets: List<WalletEntity>, selected: Lo
     WalletPickerSheet(all, selected ?: -1, onSelect = { onSelect(if (it.id == -1L) null else it.id) }, onDismiss = onDismiss)
 }
 
-/** Rows of [kind] added up in [currency]. */
-private fun sumIn(rows: List<TransactionRow>, kind: TxKind, currency: String, rates: Map<String, Double>) =
-    ExchangeRates.sum(rows.filter { it.kind == kind }.map { it.amountMinor to it.currency }, currency, rates)
+/** Rows of [kind] added up in [currency], each currency converted once, as Analytics does. */
+private fun sumIn(rows: List<TransactionRow>, kind: TxKind, currency: String, rates: Map<String, Double>) = ExchangeRates.sum(
+    rows.filter { it.kind == kind }.groupBy { it.currency.uppercase() }.map { (cur, list) -> list.sumOf { it.amountMinor } to cur },
+    currency, rates,
+)
 
 @Composable
 fun TransactionList(

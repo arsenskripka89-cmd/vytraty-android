@@ -86,16 +86,18 @@ interface TransactionDao {
         """
     }
 
+    /** [kind] is a [TxKind] name, null = every kind. */
     @Query(
         "$ROW_SELECT WHERE t.timestamp BETWEEN :from AND :to " +
             "AND (:walletId IS NULL OR t.walletId = :walletId) " +
             "AND (:categoryId IS NULL OR t.categoryId = :categoryId) " +
             "AND (:onlyUncategorized = 0 OR (t.categoryId IS NULL AND t.kind != 'TRANSFER')) " +
+            "AND (:kind IS NULL OR t.kind = :kind) " +
             "AND (:query = '' OR t.merchant LIKE '%' || :query || '%' OR t.note LIKE '%' || :query || '%') " +
             "ORDER BY t.timestamp DESC, t.id DESC"
     )
     fun observeRows(
-        from: Long, to: Long, walletId: Long?, categoryId: Long?, onlyUncategorized: Boolean, query: String,
+        from: Long, to: Long, walletId: Long?, categoryId: Long?, onlyUncategorized: Boolean, query: String, kind: String? = null,
     ): Flow<List<TransactionRow>>
 
     @Query("$ROW_SELECT ORDER BY t.timestamp DESC, t.id DESC LIMIT :limit")

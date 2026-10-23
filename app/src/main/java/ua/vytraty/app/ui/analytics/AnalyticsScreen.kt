@@ -2,6 +2,7 @@
 
 package ua.vytraty.app.ui.analytics
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,6 +74,7 @@ import ua.vytraty.app.ui.components.charts.LineChart
 import ua.vytraty.app.ui.components.charts.LinePoint
 import ua.vytraty.app.ui.components.charts.PieSlice
 import ua.vytraty.app.ui.components.toColor
+import ua.vytraty.app.ui.history.HistoryFilters
 import ua.vytraty.app.ui.theme.ExpenseRed
 import ua.vytraty.app.ui.theme.IncomeGreen
 import ua.vytraty.app.ui.theme.WarnAmber
@@ -162,8 +164,9 @@ class AnalyticsViewModel(c: AppContainer) : ViewModel() {
     fun update(block: AnalyticsFilters.() -> AnalyticsFilters) = filters.update(block)
 }
 
+/** [onOpenHistory] shows the operations behind a category line, with the same month, wallet and currency. */
 @Composable
-fun AnalyticsScreen() {
+fun AnalyticsScreen(onOpenHistory: (HistoryFilters) -> Unit = {}) {
     val vm = appViewModel { AnalyticsViewModel(it) }
     val f by vm.filters.collectAsStateWithLifecycle()
     val s by vm.state.collectAsStateWithLifecycle()
@@ -228,7 +231,19 @@ fun AnalyticsScreen() {
             items(s.byCategory, key = { it.categoryId ?: -1 }) { cs ->
                 val cat = categories.firstOrNull { it.id == cs.categoryId }
                 val pct = if (total > 0) cs.total * 100 / total else 0
-                Row(Modifier.fillMaxWidth().padding(16.dp, 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clickable {
+                            onOpenHistory(
+                                HistoryFilters(
+                                    month = f.month, walletId = f.walletId, categoryId = cs.categoryId,
+                                    onlyUncategorized = cs.categoryId == null, kind = f.kind, currency = currency,
+                                ),
+                            )
+                        }
+                        .padding(16.dp, 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     CategoryBadge(cat?.icon, cat?.color, 36)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
