@@ -58,6 +58,7 @@ import ua.vytraty.app.data.rates.ExchangeRates
 import ua.vytraty.app.di.AppContainer
 import ua.vytraty.app.domain.Money
 import ua.vytraty.app.domain.Refunds
+import ua.vytraty.app.domain.parser.BankSource
 import ua.vytraty.app.domain.usecase.MergeTransfersUseCase
 import ua.vytraty.app.ui.components.AppScaffold
 import ua.vytraty.app.ui.components.CategoryBadge
@@ -90,6 +91,8 @@ data class TxForm(
     val recordFee: Boolean = true,
     val externalId: String? = null,
     val notificationLogId: Long? = null,
+    /** Apps whose notifications announced this payment; two when the bank and Google Wallet were grouped. */
+    val sources: List<String> = emptyList(),
     val currency: String? = null,
     val learnRule: Boolean = true,
     val loaded: Boolean = false,
@@ -108,7 +111,12 @@ sealed class TxEvent {
     data class AskApplyToOthers(val ids: List<Long>, val categoryId: Long, val merchant: String) : TxEvent()
 }
 
-class TransactionEditViewModel(private val c: AppContainer, private val id: Long, initialKind: String) : ViewModel() {
+class TransactionEditViewModel(
+    private val c: AppContainer,
+    private val id: Long,
+    initialKind: String,
+    private val initialWalletId: Long = 0,
+) : ViewModel() {
     private val db = c.db
     val form = MutableStateFlow(TxForm(kind = runCatching { TxKind.valueOf(initialKind) }.getOrDefault(TxKind.EXPENSE)))
     val wallets = db.walletDao().observeActive().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -136,10 +144,14 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
                         note = t.note.orEmpty(), timestamp = t.timestamp, source = t.source, cardLast4 = t.cardLast4,
                         externalId = t.externalId, notificationLogId = t.notificationLogId, currency = t.currency,
                         learnRule = !t.merchant.isNullOrBlank(), loaded = true,
+                        sources = db.notificationLogDao().byTransactionId(t.id).sortedBy { it.postedAt }
+                            .map { BankSource.byPackage(it.packageName)?.displayName ?: it.packageName }.distinct(),
                     )
                 }
             } else {
-                val w = db.walletDao().defaultWallet() ?: db.walletDao().firstActive()
+                // Opened from a wallet card: that wallet is the one being paid from.
+                val w = initialWalletId.takeIf { it > 0 }?.let { db.walletDao().byId(it) }?.takeIf { !it.archived }
+                    ?: db.walletDao().defaultWallet() ?: db.walletDao().firstActive()
                 form.update { it.copy(walletId = w?.id, currency = w?.currency, loaded = true) }
             }
         }
@@ -224,8 +236,14 @@ class TransactionEditViewModel(private val c: AppContainer, private val id: Long
 }
 
 @Composable
-fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onNewCategory: (String) -> Unit) {
-    val vm = appViewModel(key = "tx$id") { TransactionEditViewModel(it, id, initialKind) }
+fun TransactionEditScreen(
+    id: Long,
+    initialKind: String,
+    onBack: () -> Unit,
+    onNewCategory: (String) -> Unit,
+    walletId: Long = 0,
+) {
+    val vm = appViewModel(key = "tx$id-$walletId") { TransactionEditViewModel(it, id, initialKind, walletId) }
     val f by vm.form.collectAsStateWithLifecycle()
     val wallets by vm.wallets.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
@@ -261,6 +279,7 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
                             )
                             val details = listOfNotNull(wallet?.name, f.cardLast4?.let { "картка •••• $it" }).joinToString(" · ")
                             if (details.isNotBlank()) Text(details, style = MaterialTheme.typography.bodySmall)
+                            if (f.sources.size > 1) Text("Об'єднано сповіщення: ${f.sources.joinToString(" + ")}", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -295,7 +314,7 @@ fun TransactionEditScreen(id: Long, initialKind: String, onBack: () -> Unit, onN
             PickerField(
                 if (f.kind == TxKind.TRANSFER) "З гаманця" else "Гаманець", wallet?.name ?: "Оберіть",
                 onClick = { showWallet = true },
-                leading = wallet?.let { { WalletIcon(it.type, it.color, 24) } },
+                leading = wallet?.let { { WalletIcon(it, 24) } },
             )
             if (f.kind == TxKind.TRANSFER) {
                 Spacer(Modifier.height(12.dp))

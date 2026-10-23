@@ -11,7 +11,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import ua.vytraty.app.notifications.AppNotifications
+import ua.vytraty.app.notifications.PaymentNotificationListener
 import ua.vytraty.app.ui.navigation.PendingNav
 import ua.vytraty.app.ui.navigation.VytratyNavHost
 import ua.vytraty.app.ui.theme.VytratyTheme
@@ -30,6 +32,13 @@ class MainActivity : ComponentActivity() {
                 VytratyNavHost(pendingNav = pendingNav, onPendingConsumed = { pendingNav.value = null })
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Opening the app is the moment to notice that payments stopped arriving, and to reconnect.
+        val app = application as VytratyApp
+        app.container.appScope.launch { PaymentNotificationListener.Watchdog.ensureConnected(app) }
     }
 
     override fun onNewIntent(intent: Intent) {

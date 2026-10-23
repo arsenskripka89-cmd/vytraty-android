@@ -116,6 +116,10 @@ interface TransactionDao {
     @Query("SELECT COUNT(*) FROM transactions WHERE categoryId IS NULL AND kind != 'TRANSFER'")
     fun observeUncategorizedCount(): Flow<Int>
 
+    /** Uncategorized operations added after [since] (the overview reminder counts only new ones). */
+    @Query("SELECT COUNT(*) FROM transactions WHERE categoryId IS NULL AND kind != 'TRANSFER' AND createdAt > :since")
+    fun observeUncategorizedCountSince(since: Long): Flow<Int>
+
     @Query("SELECT categoryId, currency, SUM(amountMinor) AS total FROM transactions WHERE kind = :kind AND timestamp BETWEEN :from AND :to AND (:walletId IS NULL OR walletId = :walletId) GROUP BY categoryId, currency")
     fun observeSumsByCategory(kind: TxKind, from: Long, to: Long, walletId: Long?): Flow<List<CategorySum>>
 
@@ -184,6 +188,14 @@ interface TransactionDao {
             "ORDER BY ABS(timestamp - :around) LIMIT 1"
     )
     suspend fun counterpart(id: Long, kind: TxKind, walletId: Long, from: Long, to: Long, around: Long): TransactionEntity?
+
+    /** Payments captured from notifications with this amount around [around]; candidates for one payment announced twice. */
+    @Query(
+        "SELECT * FROM transactions WHERE source = 'NOTIFICATION' AND kind = :kind AND amountMinor = :amountMinor " +
+            "AND currency = :currency COLLATE NOCASE AND timestamp BETWEEN :from AND :to " +
+            "ORDER BY ABS(timestamp - :around) LIMIT 5"
+    )
+    suspend fun sameAmount(kind: TxKind, amountMinor: Long, currency: String, from: Long, to: Long, around: Long): List<TransactionEntity>
 
     @Query("UPDATE transactions SET categoryId = :categoryId WHERE id IN (:ids)")
     suspend fun setCategory(ids: List<Long>, categoryId: Long?)
@@ -285,7 +297,7 @@ interface NotificationLogDao {
     @Query("SELECT COUNT(*) FROM notification_log WHERE parsed = 0")
     fun observeUnparsedCount(): Flow<Int>
 
-    @Query("SELECT * FROM notification_log WHERE packageName = :pkg AND text = :text AND postedAt > :since LIMIT 1")
+    @Query("SELECT * FROM notification_log WHERE packageName = :pkg AND (text = :text OR (text IS NULL AND :text IS NULL)) AND postedAt > :since LIMIT 1")
     suspend fun findDuplicate(pkg: String, text: String?, since: Long): NotificationLogEntity?
 
     @Insert suspend fun insert(n: NotificationLogEntity): Long

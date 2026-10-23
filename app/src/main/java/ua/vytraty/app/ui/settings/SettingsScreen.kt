@@ -110,10 +110,15 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
 
     fun installDownloaded() { update.value.file?.let { c.updateChecker.install(it) } }
 
+    fun reconnectListener(context: Context) = c.appScope.launch {
+        PaymentNotificationListener.Watchdog.ensureConnected(context.applicationContext, force = true)
+    }
+
     fun setCapture(v: Boolean) = viewModelScope.launch { c.settings.setCaptureEnabled(v) }
     fun setNotifyUncategorized(v: Boolean) = viewModelScope.launch { c.settings.setNotifyUncategorized(v) }
     fun setOnlyMatchedWallet(v: Boolean) = viewModelScope.launch { c.settings.setOnlyMatchedWallet(v) }
     fun setAutoMergeTransfers(v: Boolean) = viewModelScope.launch { c.settings.setAutoMergeTransfers(v) }
+    fun setGroupDuplicates(v: Boolean) = viewModelScope.launch { c.settings.setGroupDuplicates(v) }
     fun setDefaultWallet(id: Long) = viewModelScope.launch { c.db.walletDao().setDefault(id) }
     fun setMainCurrency(v: String) = viewModelScope.launch { c.settings.setMainCurrency(v) }
     fun applyRules() = viewModelScope.launch { message.value = "Категорію призначено ${c.assignCategory.applyRulesToUncategorized()} операціям" }
@@ -157,6 +162,9 @@ fun SettingsScreen(onBack: () -> Unit, onLog: () -> Unit, onTester: () -> Unit, 
     val context = LocalContext.current
     var showWallet by remember { mutableStateOf(false) }
     val listenerOn = PaymentNotificationListener.isEnabled(context)
+    val listenerConnected by PaymentNotificationListener.connected.collectAsStateWithLifecycle()
+    // Access granted but not bound: payments are not arriving even though the system says all is well.
+    val listenerOk = listenerOn && listenerConnected
     val defaultWallet = wallets.firstOrNull { it.isDefault }
 
     val upd by vm.update.collectAsStateWithLifecycle()
@@ -196,12 +204,30 @@ fun SettingsScreen(onBack: () -> Unit, onLog: () -> Unit, onTester: () -> Unit, 
             }
             Card(
                 Modifier.fillMaxWidth().padding(16.dp),
-                colors = CardDefaults.cardColors(containerColor = if (listenerOn) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer),
+                colors = CardDefaults.cardColors(containerColor = if (listenerOk) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer),
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(if (listenerOn) "Доступ до сповіщень надано ✓" else "Доступ до сповіщень не надано", fontWeight = FontWeight.Bold)
-                    Text("Потрібен, щоб читати сповіщення Google Pay та банків про оплату. Застосунок читає лише пакети зі списку банків.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        when {
+                            !listenerOn -> "Доступ до сповіщень не надано"
+                            !listenerConnected -> "Доступ надано, але сповіщення не надходять"
+                            else -> "Сповіщення надходять ✓"
+                        },
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        if (listenerOn && !listenerConnected) {
+                            "Система не підключила застосунок після оновлення чи перезапуску — платежі не записуються. Натисніть «Перепідключити»; якщо не допоможе, вимкніть і ввімкніть доступ у системних налаштуваннях."
+                        } else {
+                            "Потрібен, щоб читати сповіщення Google Pay та банків про оплату. Застосунок читає лише пакети зі списку банків."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     Spacer(Modifier.height(8.dp))
+                    if (listenerOn && !listenerConnected) {
+                        Button(onClick = { vm.reconnectListener(context) }) { Text("Перепідключити") }
+                        Spacer(Modifier.height(4.dp))
+                    }
                     OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) {
                         Text("Відкрити системні налаштування")
                     }
@@ -219,6 +245,11 @@ fun SettingsScreen(onBack: () -> Unit, onLog: () -> Unit, onTester: () -> Unit, 
                 "Списання й зарахування на різних картках протягом 15 хв стають одним переказом із двома сумами",
                 s.autoMergeTransfers,
             ) { vm.setAutoMergeTransfers(it) }
+            SwitchRow(
+                "Групувати дублі сповіщень",
+                "Та сама сума від банку й Google Wallet протягом 5 хв — одна операція, дані з обох сповіщень",
+                s.groupDuplicates,
+            ) { vm.setGroupDuplicates(it) }
             Column(Modifier.padding(16.dp, 8.dp)) {
                 PickerField("Гаманець за замовчуванням для сповіщень", defaultWallet?.name ?: "Не обрано", onClick = { showWallet = true })
                 Text("Використовується, коли картку у сповіщенні не розпізнано. Щоб розпізнавалась — вкажіть останні 4 цифри в гаманці.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
